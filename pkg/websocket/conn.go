@@ -17,7 +17,7 @@ const (
 
 type Conn struct {
 	WS       *websocket.Conn
-	UID      string
+	QQ       int64
 	Platform string
 	mu       sync.Mutex
 	Send     chan []byte

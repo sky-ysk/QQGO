@@ -40,8 +40,8 @@ type Message struct {
 	ID        int64       `gorm:"primaryKey;autoIncrement" json:"id"`
 	ClientSeq int64       `gorm:"default:0" json:"client_seq,omitempty"`
 	MsgType   MessageType `gorm:"not null;index" json:"msg_type"`
-	FromUID   string      `gorm:"index;not null" json:"from_uid"`
-	ToUID     string      `gorm:"index;not null" json:"to_uid"`
+	FromQQ    int64       `gorm:"index;not null" json:"from_qq"`
+	ToQQ      int64       `gorm:"index;not null" json:"to_qq"`
 	GroupID   string      `gorm:"index" json:"group_id,omitempty"`
 	Content   string      `gorm:"not null" json:"content"`
 	Delivered bool        `gorm:"default:false" json:"delivered"`
@@ -50,7 +50,7 @@ type Message struct {
 }
 
 type LoginRequest struct {
-	UID      string `json:"uid"`
+	QQ       int64  `json:"qq"`
 	Password string `json:"password,omitempty"`
 	Token    string `json:"token,omitempty"`
 	Platform string `json:"platform"`
@@ -65,7 +65,6 @@ type LoginResponse struct {
 }
 
 type RegisterRequest struct {
-	UID      string `json:"uid"`
 	Password string `json:"password"`
 	Nickname string `json:"nickname"`
 }
@@ -91,7 +90,6 @@ type FriendListResponse struct {
 
 type FriendInfo struct {
 	QQNumber  int64  `json:"qq_number"`
-	UID       string `json:"uid"`
 	Nickname  string `json:"nickname"`
 	Remark    string `json:"remark,omitempty"`
 	GroupName string `json:"group_name"`
@@ -101,7 +99,6 @@ type FriendInfo struct {
 
 type UserSearchResult struct {
 	QQNumber int64  `json:"qq_number"`
-	UID      string `json:"uid"`
 	Nickname string `json:"nickname"`
 	Online   bool   `json:"online"`
 }
