@@ -426,10 +426,12 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 
 | 优先级 | 版本 | 需求 | 类型 | 说明 |
 |--------|------|------|------|------|
-| **P0** | v0.3.1 | 发送消息前置校验 | bug | 修复 BUG-007：`/to` 不存在用户时拒绝发送 |
-| **P0** | v0.3.1 | 好友分组管理重做 | design | 新建 `friend_groups` 表，先创建分组再移动好友 |
-| **P1** | v0.3.1 | `/login` 客户端内登录 | feature | 登录失败后无需重启 client |
-| **P1** | v0.3.1 | `/whoami` 用户信息 | feature | 查看当前账号 uid / nickname / QQ |
+| **P0** | v0.4 | QQ 号作为唯一标识 | refactor | 全系统 UID(string)→QQ(int64)，注册只需 nickname+password |
+| **P0** | v0.4 | 显示逻辑统一 | refactor | Remark > Nickname > QQ号 |
+| **P1** | v0.4 | 发送前置校验 | bug | BUG-007 重做：目标 QQ 不存在则拒绝发送 |
+| **P1** | v0.4 | 好友分组管理重做 | design | friend_groups 表，QQ 号标识，先创建再移动 |
+| **P1** | v0.4 | `/login` 客户端内登录 | feature | QQ 号 + 密码登录 |
+| **P1** | v0.4 | `/whoami` 用户信息 | feature | 显示 nickname / QQ |
 | **P1** | v0.4 | 优雅退出 | bug | BUG-001/008：WebSocket Close Frame |
 | **P1** | v0.4 | 群组聊天 | feature | 创建群、加群、群消息广播 |
 | **P1** | v0.4 | 会话历史记录 | feature | 选中会话后显示最近 N 条消息 |
