@@ -17,6 +17,7 @@ import (
 
 var (
 	currentQQ      int64
+	myNickname     string
 	targetQQ       int64
 	myQQNumber     int64
 	clientSeq      int64
@@ -41,8 +42,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			fmt.Println("[cmd] invalid QQ number")
 			return true
 		}
-		targetQQ = qq
-		fmt.Printf("[cmd] switched to chatting with %d\n", targetQQ)
+		checkUser(conn, qq)
 
 	case "/register":
 		if len(parts) < 3 {
@@ -155,7 +155,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		if myQQNumber == 0 {
 			fmt.Println("[cmd] not logged in")
 		} else {
-			fmt.Printf("[cmd] QQ: %d\n", myQQNumber)
+			fmt.Printf("[cmd] %s (QQ: %d)\n", myNickname, myQQNumber)
 		}
 
 	case "/help":
@@ -302,6 +302,14 @@ func remarkFriend(conn *websocket.Conn, qqNumber int64, remark string) {
 	fmt.Printf("[cmd] setting remark for qq=%d: %s\n", qqNumber, remark)
 }
 
+func checkUser(conn *websocket.Conn, qq int64) {
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeCheckUser,
+		Content: strconv.FormatInt(qq, 10),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
 func createGroup(conn *websocket.Conn, name string) {
 	msg, _ := json.Marshal(&model.Message{
 		MsgType: model.MsgTypeFriendCreateGroup,
@@ -339,9 +347,9 @@ func prompt() {
 	if myQQNumber == 0 {
 		fmt.Print("(not logged in) > ")
 	} else if targetQQ == 0 {
-		fmt.Printf("(%d) > ", myQQNumber)
+		fmt.Printf("(%s QQ:%d) > ", myNickname, myQQNumber)
 	} else {
-		fmt.Printf("[%d -> %d] > ", myQQNumber, targetQQ)
+		fmt.Printf("[%s QQ:%d -> QQ:%d] > ", myNickname, myQQNumber, targetQQ)
 	}
 }
 
@@ -365,6 +373,12 @@ func main() {
 		for {
 			_, data, err := conn.ReadMessage()
 			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) || websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure) {
+					return
+				}
+				if strings.Contains(err.Error(), "use of closed network connection") {
+					return
+				}
 				log.Printf("[client] read error: %v", err)
 				return
 			}
@@ -385,7 +399,8 @@ func main() {
 							pendingLoginQQ = 0
 						}
 						myQQNumber = resp.QQNumber
-						fmt.Printf("\r[Server]: login ok, QQ=%d, online=%d\n> ", myQQNumber, resp.Online)
+						myNickname = resp.Nickname
+						fmt.Printf("\r[Server]: login ok, %s(QQ:%d), online=%d\n> ", myNickname, myQQNumber, resp.Online)
 					} else {
 						pendingLoginQQ = 0
 						fmt.Printf("\r[Server]: login failed - %s\n> ", resp.Message)
@@ -437,7 +452,7 @@ func main() {
 			case model.MsgTypeFriendList:
 				var resp model.FriendListResponse
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
-					displayFriendList(resp.Friends)
+					displayFriendList(resp.Friends, resp.AllGroups)
 				}
 				prompt()
 
@@ -460,6 +475,22 @@ func main() {
 						fmt.Printf("  [%s]\n", g)
 					}
 					fmt.Println("─────────────────────────")
+				}
+				prompt()
+
+			case model.MsgTypeCheckUser:
+				var resp model.CheckUserResponse
+				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
+					if resp.Code == 0 {
+						targetQQ = resp.QQNumber
+						statusIcon := "●"
+						if !resp.Online {
+							statusIcon = "○"
+						}
+						fmt.Printf("\r[cmd] switched to %s %s(QQ:%d)\n> ", statusIcon, resp.Nickname, resp.QQNumber)
+					} else {
+						fmt.Printf("\r[cmd] %s\n> ", resp.Message)
+					}
 				}
 				prompt()
 
@@ -518,7 +549,7 @@ func main() {
 	}
 }
 
-func displayFriendList(friends []model.FriendInfo) {
+func displayFriendList(friends []model.FriendInfo, allGroups []string) {
 	fmt.Println("\n───── Friend List ─────")
 
 	grouped := make(map[string][]model.FriendInfo)
@@ -544,7 +575,32 @@ func displayFriendList(friends []model.FriendInfo) {
 				fmt.Printf("    %s QQ:%d  %s\n", statusIcon, f.QQNumber, displayName)
 			}
 			displayed[g] = true
+		} else if g == "待处理" {
+		} else {
+			fmt.Printf("\n  [%s]\n", g)
+			displayed[g] = true
 		}
+	}
+
+	for _, g := range allGroups {
+		if displayed[g] {
+			continue
+		}
+		fmt.Printf("\n  [%s]\n", g)
+		if list, ok := grouped[g]; ok {
+			for _, f := range list {
+				statusIcon := "●"
+				if !f.Online {
+					statusIcon = "○"
+				}
+				displayName := f.Nickname
+				if f.Remark != "" {
+					displayName = f.Remark + "(" + f.Nickname + ")"
+				}
+				fmt.Printf("    %s QQ:%d  %s\n", statusIcon, f.QQNumber, displayName)
+			}
+		}
+		displayed[g] = true
 	}
 
 	for g, list := range grouped {

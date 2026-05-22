@@ -128,6 +128,8 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleFriendCreateGroup(c, &msg)
 	case model.MsgTypeFriendDeleteGroup:
 		h.handleFriendDeleteGroup(c, &msg)
+	case model.MsgTypeCheckUser:
+		h.handleCheckUser(c, &msg)
 	case model.MsgTypeText, model.MsgTypeImage, model.MsgTypeFile:
 		h.handleChatMessage(c, &msg)
 	default:
@@ -167,7 +169,7 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 	h.conns[qqNumber] = c
 	h.mu.Unlock()
 
-	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: qqNumber})
+	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: qqNumber, Nickname: req.Nickname})
 
 	if h.onStatus != nil {
 		h.onStatus(qqNumber, true)
@@ -201,6 +203,12 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 			return
 		}
 
+		user, _ := h.svc.GetUserByQQ(req.QQ)
+		nickname := ""
+		if user != nil {
+			nickname = user.Nickname
+		}
+
 		h.mu.Lock()
 		if oldConn, ok := h.conns[req.QQ]; ok {
 			oldConn.Close()
@@ -210,7 +218,7 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: req.QQ})
+		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
 
 		if h.onStatus != nil {
 			h.onStatus(req.QQ, true)
@@ -228,6 +236,12 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 			return
 		}
 
+		user, _ := h.svc.GetUserByQQ(req.QQ)
+		nickname := ""
+		if user != nil {
+			nickname = user.Nickname
+		}
+
 		h.mu.Lock()
 		if oldConn, ok := h.conns[req.QQ]; ok {
 			oldConn.Close()
@@ -237,7 +251,7 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: req.Token, Online: h.Count(), QQNumber: req.QQ})
+		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: req.Token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
 
 		if h.onStatus != nil {
 			h.onStatus(req.QQ, true)
@@ -426,7 +440,9 @@ func (h *Hub) handleFriendList(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	resp := model.FriendListResponse{Friends: list}
+	groups, _ := h.svc.GetFriendGroups(c.QQ)
+
+	resp := model.FriendListResponse{Friends: list, AllGroups: groups}
 	payload, _ := json.Marshal(resp)
 	c.WriteJSON(&model.Message{
 		MsgType: model.MsgTypeFriendList,
@@ -544,6 +560,31 @@ func (h *Hub) handleFriendDeleteGroup(c *ws.Conn, msg *model.Message) {
 	}
 	log.Printf("[friend] group deleted: qq=%d name=%s", c.QQ, msg.Content)
 	h.writeFriendResult(c, "group deleted")
+}
+
+func (h *Hub) handleCheckUser(c *ws.Conn, msg *model.Message) {
+	qq, err := strconv.ParseInt(msg.Content, 10, 64)
+	if err != nil {
+		payload, _ := json.Marshal(&model.CheckUserResponse{Code: 400, Message: "invalid QQ number"})
+		c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
+		return
+	}
+
+	user, err := h.svc.GetUserByQQ(qq)
+	if err != nil {
+		payload, _ := json.Marshal(&model.CheckUserResponse{Code: 404, Message: "user not found"})
+		c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
+		return
+	}
+
+	payload, _ := json.Marshal(&model.CheckUserResponse{
+		Code:     0,
+		Message:  "ok",
+		QQNumber: user.QQNumber,
+		Nickname: user.Nickname,
+		Online:   h.isOnline(user.QQNumber),
+	})
+	c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
 }
 
 func (h *Hub) notifyFriendRequest(fromQQ int64, toQQ int64, message string) {

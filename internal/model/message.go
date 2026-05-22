@@ -31,6 +31,7 @@ const (
 	MsgTypeFriendGroups      MessageType = 308
 	MsgTypeFriendCreateGroup MessageType = 309
 	MsgTypeFriendDeleteGroup MessageType = 310
+	MsgTypeCheckUser         MessageType = 311
 	MsgTypeGroupCreate       MessageType = 200
 	MsgTypeGroupJoin        MessageType = 201
 	MsgTypeGroupLeave       MessageType = 202
@@ -64,6 +65,7 @@ type LoginResponse struct {
 	Token    string `json:"token,omitempty"`
 	Online   int    `json:"online"`
 	QQNumber int64  `json:"qq_number,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -87,7 +89,8 @@ type FriendRequestPayload struct {
 }
 
 type FriendListResponse struct {
-	Friends []FriendInfo `json:"friends"`
+	Friends   []FriendInfo `json:"friends"`
+	AllGroups []string     `json:"all_groups"`
 }
 
 type FriendInfo struct {
@@ -107,4 +110,12 @@ type UserSearchResult struct {
 
 type FriendGroupListResponse struct {
 	Groups []string `json:"groups"`
+}
+
+type CheckUserResponse struct {
+	Code     int    `json:"code"`
+	Message  string `json:"message"`
+	QQNumber int64  `json:"qq_number,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+	Online   bool   `json:"online"`
 }
