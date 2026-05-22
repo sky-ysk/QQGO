@@ -2,6 +2,19 @@
 
 ---
 
+## [v0.4] — 2026-05-22 / branch: `feature/v0.4-qq-identity`
+
+### Changed
+- **全系统重构：** QQ 号作为唯一标识（UID(string) → QQ(int64)）
+- **注册流程：** 只需 `nickname + password`，自动分配 QQ 号
+- **登录流程：** 使用 QQ 号 + 密码登录
+- **数据模型：** User 移除 UID 字段，Message(FromQQ/ToQQ)、Friend(QQ/FriendQQ)、FriendGroup(QQ) 全部使用 QQ 号
+- **连接管理：** Hub.conns 使用 `map[int64]*Conn`，Conn.QQ 替代 Conn.UID
+- **客户端：** 启动无需参数，使用 `/login` 或 `/register` 手动登录
+- **显示逻辑：** 好友列表/搜索结果使用 `Remark > Nickname`，不再显示 UID
+
+---
+
 ## [v0.3] — 2026-05-20 / branch: `feature/v0.3-friend`
 
 ### Added
