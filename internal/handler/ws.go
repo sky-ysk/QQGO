@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -22,38 +23,37 @@ var upgrader = websocket.Upgrader{
 
 type Hub struct {
 	mu       sync.RWMutex
-	conns    map[string]*ws.Conn
+	conns    map[int64]*ws.Conn
 	groups   map[string]map[string]bool
 	svc      Service
-	onStatus func(uid string, online bool)
+	onStatus func(qq int64, online bool)
 }
 
 type Service interface {
 	HandleMessage(ctx context.Context, msg *model.Message) error
-	ValidateToken(uid, token string) (bool, error)
+	ValidateToken(qq int64, token string) (bool, error)
 	GetGroupMembers(groupID string) ([]string, error)
-	GetOfflineMessages(uid string) ([]*model.Message, error)
+	GetOfflineMessages(qq int64) ([]*model.Message, error)
 	MarkDelivered(messageID int64) error
-	Register(uid, password, nickname string) (int64, error)
-	Login(uid, password string) (string, int64, error)
-	LoginWithToken(uid, token string) (bool, error)
+	Register(nickname, password string) (int64, error)
+	Login(qq int64, password string) (string, error)
+	LoginWithToken(qq int64, token string) (bool, error)
 
-	SendFriendRequest(fromUID string, toQQNumber int64, message string) error
-	AcceptFriend(uid string, fromQQNumber int64) error
-	RejectFriend(uid string, fromQQNumber int64) error
-	DeleteFriend(uid string, friendQQNumber int64) error
-	GetFriendList(uid string, onlineFunc func(string) bool) ([]model.FriendInfo, error)
-	SearchUsers(keyword string, onlineFunc func(string) bool) ([]model.UserSearchResult, error)
-	MoveFriendGroup(uid string, friendQQNumber int64, groupName string) error
-	GetFriendGroups(uid string) ([]string, error)
-	SetRemark(uid string, friendQQNumber int64, remark string) error
-	GetUserByUID(uid string) (*model.User, error)
-	GetUserByQQNumber(qqNumber int64) (*model.User, error)
+	SendFriendRequest(fromQQ int64, toQQ int64, message string) error
+	AcceptFriend(qq int64, fromQQ int64) error
+	RejectFriend(qq int64, fromQQ int64) error
+	DeleteFriend(qq int64, friendQQ int64) error
+	GetFriendList(qq int64, onlineFunc func(int64) bool) ([]model.FriendInfo, error)
+	SearchUsers(keyword string, onlineFunc func(int64) bool) ([]model.UserSearchResult, error)
+	MoveFriendGroup(qq int64, friendQQ int64, groupName string) error
+	GetFriendGroups(qq int64) ([]string, error)
+	SetRemark(qq int64, friendQQ int64, remark string) error
+	GetUserByQQ(qq int64) (*model.User, error)
 }
 
-func NewHub(svc Service, onStatus func(string, bool)) *Hub {
+func NewHub(svc Service, onStatus func(int64, bool)) *Hub {
 	return &Hub{
-		conns:    make(map[string]*ws.Conn),
+		conns:    make(map[int64]*ws.Conn),
 		groups:   make(map[string]map[string]bool),
 		svc:      svc,
 		onStatus: onStatus,
@@ -82,16 +82,16 @@ func (h *Hub) handleConnection(c *ws.Conn) {
 		h.dispatch(c, data)
 	})
 
-	log.Printf("[conn] %s read loop exited", c.UID)
-	if c.UID != "" {
-		h.RemoveUser(c.UID)
+	log.Printf("[conn] %d read loop exited", c.QQ)
+	if c.QQ != 0 {
+		h.RemoveUser(c.QQ)
 	}
 }
 
 func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 	var msg model.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
-		log.Printf("[dispatch] unmarshal error from %s: %v", c.UID, err)
+		log.Printf("[dispatch] unmarshal error from %d: %v", c.QQ, err)
 		return
 	}
 
@@ -136,38 +136,38 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	qqNumber, err := h.svc.Register(req.UID, req.Password, req.Nickname)
+	qqNumber, err := h.svc.Register(req.Nickname, req.Password)
 	if err != nil {
-		log.Printf("[register] failed uid=%s: %v", req.UID, err)
+		log.Printf("[register] failed: %v", err)
 		h.writeRegisterAck(c, &model.RegisterResponse{Code: 400, Message: err.Error()}, 0)
 		return
 	}
 
-	log.Printf("[register] success uid=%s qq=%d", req.UID, qqNumber)
+	log.Printf("[register] success qq=%d", qqNumber)
 	h.writeRegisterAck(c, &model.RegisterResponse{Code: 0, Message: "register ok", QQNumber: qqNumber}, qqNumber)
 
-	token, _, err := h.svc.Login(req.UID, req.Password)
+	token, err := h.svc.Login(qqNumber, req.Password)
 	if err != nil {
-		log.Printf("[register] auto-login failed for %s: %v", req.UID, err)
+		log.Printf("[register] auto-login failed for qq=%d: %v", qqNumber, err)
 		return
 	}
 
 	h.mu.Lock()
-	if oldConn, ok := h.conns[req.UID]; ok {
+	if oldConn, ok := h.conns[qqNumber]; ok {
 		oldConn.Close()
 	}
-	c.UID = req.UID
+	c.QQ = qqNumber
 	c.Platform = "cli"
-	h.conns[req.UID] = c
+	h.conns[qqNumber] = c
 	h.mu.Unlock()
 
 	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: qqNumber})
 
 	if h.onStatus != nil {
-		h.onStatus(req.UID, true)
+		h.onStatus(qqNumber, true)
 	}
 
-	go h.pushOfflineMessages(req.UID)
+	go h.pushOfflineMessages(qqNumber)
 }
 
 func (h *Hub) writeRegisterAck(c *ws.Conn, resp *model.RegisterResponse, qqNumber int64) {
@@ -185,66 +185,60 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	log.Printf("[login] attempting uid=%s", req.UID)
+	log.Printf("[login] attempting qq=%d", req.QQ)
 
 	if req.Password != "" {
-		token, qqNumber, err := h.svc.Login(req.UID, req.Password)
+		token, err := h.svc.Login(req.QQ, req.Password)
 		if err != nil {
-			log.Printf("[login] auth failed for %s: %v", req.UID, err)
+			log.Printf("[login] auth failed for qq=%d: %v", req.QQ, err)
 			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: "auth failed"})
 			return
 		}
 
 		h.mu.Lock()
-		if oldConn, ok := h.conns[req.UID]; ok {
+		if oldConn, ok := h.conns[req.QQ]; ok {
 			oldConn.Close()
 		}
-		c.UID = req.UID
+		c.QQ = req.QQ
 		c.Platform = req.Platform
-		h.conns[req.UID] = c
+		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: qqNumber})
+		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: req.QQ})
 
 		if h.onStatus != nil {
-			h.onStatus(req.UID, true)
+			h.onStatus(req.QQ, true)
 		}
 
-		log.Printf("[login] user %s login, online: %d", req.UID, h.Count())
-		go h.pushOfflineMessages(req.UID)
+		log.Printf("[login] qq=%d login, online: %d", req.QQ, h.Count())
+		go h.pushOfflineMessages(req.QQ)
 		return
 	}
 
 	if req.Token != "" {
-		valid, err := h.svc.LoginWithToken(req.UID, req.Token)
+		valid, err := h.svc.LoginWithToken(req.QQ, req.Token)
 		if err != nil || !valid {
 			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: "auth failed"})
 			return
 		}
 
-		user, _ := h.svc.GetUserByUID(req.UID)
-
 		h.mu.Lock()
-		if oldConn, ok := h.conns[req.UID]; ok {
+		if oldConn, ok := h.conns[req.QQ]; ok {
 			oldConn.Close()
 		}
-		c.UID = req.UID
+		c.QQ = req.QQ
 		c.Platform = req.Platform
-		h.conns[req.UID] = c
+		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
-		qqNumber := int64(0)
-		if user != nil {
-			qqNumber = user.QQNumber
-		}
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: req.Token, Online: h.Count(), QQNumber: qqNumber})
+		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: req.Token, Online: h.Count(), QQNumber: req.QQ})
 
 		if h.onStatus != nil {
-			h.onStatus(req.UID, true)
+			h.onStatus(req.QQ, true)
 		}
 
-		log.Printf("[login] user %s login via token, online: %d", req.UID, h.Count())
-		go h.pushOfflineMessages(req.UID)
+		log.Printf("[login] qq=%d login via token, online: %d", req.QQ, h.Count())
+		go h.pushOfflineMessages(req.QQ)
 		return
 	}
 
@@ -267,7 +261,7 @@ func (h *Hub) handleHeartbeat(c *ws.Conn) {
 }
 
 func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
-	msg.FromUID = c.UID
+	msg.FromQQ = c.QQ
 
 	if err := h.svc.HandleMessage(context.Background(), msg); err != nil {
 		log.Printf("[chat] store error: %v", err)
@@ -289,7 +283,7 @@ func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
 	if msg.GroupID != "" {
 		h.broadcastToGroup(msg)
 	} else {
-		h.sendToUser(msg.ToUID, msg)
+		h.sendToUser(msg.ToQQ, msg)
 	}
 }
 
@@ -308,15 +302,15 @@ func (h *Hub) handleDeliveredAck(c *ws.Conn, msg *model.Message) {
 	log.Printf("[delivered] message id=%d marked delivered", ack.MessageID)
 }
 
-func (h *Hub) isOnline(uid string) bool {
+func (h *Hub) isOnline(qq int64) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	_, ok := h.conns[uid]
+	_, ok := h.conns[qq]
 	return ok
 }
 
 func (h *Hub) handleFriendRequest(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -327,18 +321,18 @@ func (h *Hub) handleFriendRequest(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if err := h.svc.SendFriendRequest(c.UID, req.ToQQNumber, req.Message); err != nil {
+	if err := h.svc.SendFriendRequest(c.QQ, req.ToQQNumber, req.Message); err != nil {
 		h.writeFriendError(c, err.Error())
 		return
 	}
 
-	log.Printf("[friend] request from %s to qq=%d", c.UID, req.ToQQNumber)
+	log.Printf("[friend] request from qq=%d to qq=%d", c.QQ, req.ToQQNumber)
 	h.writeFriendResult(c, "friend request sent")
-	h.notifyFriendRequest(c.UID, req.ToQQNumber, req.Message)
+	h.notifyFriendRequest(c.QQ, req.ToQQNumber, req.Message)
 }
 
 func (h *Hub) handleFriendAccept(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -349,18 +343,18 @@ func (h *Hub) handleFriendAccept(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if err := h.svc.AcceptFriend(c.UID, req.ToQQNumber); err != nil {
+	if err := h.svc.AcceptFriend(c.QQ, req.ToQQNumber); err != nil {
 		h.writeFriendError(c, err.Error())
 		return
 	}
 
-	log.Printf("[friend] %s accepted qq=%d", c.UID, req.ToQQNumber)
+	log.Printf("[friend] qq=%d accepted qq=%d", c.QQ, req.ToQQNumber)
 	h.writeFriendResult(c, "friend accepted")
-	h.notifyFriendAccepted(c.UID, req.ToQQNumber)
+	h.notifyFriendAccepted(c.QQ, req.ToQQNumber)
 }
 
 func (h *Hub) handleFriendReject(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -371,17 +365,17 @@ func (h *Hub) handleFriendReject(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if err := h.svc.RejectFriend(c.UID, req.ToQQNumber); err != nil {
+	if err := h.svc.RejectFriend(c.QQ, req.ToQQNumber); err != nil {
 		h.writeFriendError(c, err.Error())
 		return
 	}
 
-	log.Printf("[friend] %s rejected qq=%d", c.UID, req.ToQQNumber)
+	log.Printf("[friend] qq=%d rejected qq=%d", c.QQ, req.ToQQNumber)
 	h.writeFriendResult(c, "friend request rejected")
 }
 
 func (h *Hub) handleFriendDelete(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -392,22 +386,22 @@ func (h *Hub) handleFriendDelete(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if err := h.svc.DeleteFriend(c.UID, req.ToQQNumber); err != nil {
+	if err := h.svc.DeleteFriend(c.QQ, req.ToQQNumber); err != nil {
 		h.writeFriendError(c, err.Error())
 		return
 	}
 
-	log.Printf("[friend] %s deleted friend qq=%d", c.UID, req.ToQQNumber)
+	log.Printf("[friend] qq=%d deleted friend qq=%d", c.QQ, req.ToQQNumber)
 	h.writeFriendResult(c, "friend deleted")
 }
 
 func (h *Hub) handleFriendList(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
 
-	list, err := h.svc.GetFriendList(c.UID, h.isOnline)
+	list, err := h.svc.GetFriendList(c.QQ, h.isOnline)
 	if err != nil {
 		h.writeFriendError(c, err.Error())
 		return
@@ -422,7 +416,7 @@ func (h *Hub) handleFriendList(c *ws.Conn, msg *model.Message) {
 }
 
 func (h *Hub) handleFriendSearch(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -442,7 +436,7 @@ func (h *Hub) handleFriendSearch(c *ws.Conn, msg *model.Message) {
 }
 
 func (h *Hub) handleFriendMoveGroup(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -456,7 +450,7 @@ func (h *Hub) handleFriendMoveGroup(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if err := h.svc.MoveFriendGroup(c.UID, req.QQNumber, req.GroupName); err != nil {
+	if err := h.svc.MoveFriendGroup(c.QQ, req.QQNumber, req.GroupName); err != nil {
 		h.writeFriendError(c, err.Error())
 		return
 	}
@@ -465,7 +459,7 @@ func (h *Hub) handleFriendMoveGroup(c *ws.Conn, msg *model.Message) {
 }
 
 func (h *Hub) handleFriendRemark(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
@@ -479,7 +473,7 @@ func (h *Hub) handleFriendRemark(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if err := h.svc.SetRemark(c.UID, req.QQNumber, req.Remark); err != nil {
+	if err := h.svc.SetRemark(c.QQ, req.QQNumber, req.Remark); err != nil {
 		h.writeFriendError(c, err.Error())
 		return
 	}
@@ -488,12 +482,12 @@ func (h *Hub) handleFriendRemark(c *ws.Conn, msg *model.Message) {
 }
 
 func (h *Hub) handleFriendGroups(c *ws.Conn, msg *model.Message) {
-	if c.UID == "" {
+	if c.QQ == 0 {
 		h.writeFriendError(c, "not logged in")
 		return
 	}
 
-	groups, err := h.svc.GetFriendGroups(c.UID)
+	groups, err := h.svc.GetFriendGroups(c.QQ)
 	if err != nil {
 		h.writeFriendError(c, err.Error())
 		return
@@ -507,31 +501,28 @@ func (h *Hub) handleFriendGroups(c *ws.Conn, msg *model.Message) {
 	})
 }
 
-func (h *Hub) notifyFriendRequest(fromUID string, toQQNumber int64, message string) {
-	toUser, _ := h.svc.GetUserByQQNumber(toQQNumber)
+func (h *Hub) notifyFriendRequest(fromQQ int64, toQQ int64, message string) {
+	toUser, _ := h.svc.GetUserByQQ(toQQ)
 	if toUser == nil {
 		return
 	}
 
-	fromUser, _ := h.svc.GetUserByUID(fromUID)
-	fromNickname := fromUID
-	fromQQNumber := int64(0)
+	fromUser, _ := h.svc.GetUserByQQ(fromQQ)
+	fromNickname := ""
 	if fromUser != nil {
 		fromNickname = fromUser.Nickname
-		fromQQNumber = fromUser.QQNumber
 	}
 
 	notify := map[string]interface{}{
-		"type":         "friend_request",
-		"from_uid":     fromUID,
-		"from_qq":      fromQQNumber,
+		"type":          "friend_request",
+		"from_qq":       fromQQ,
 		"from_nickname": fromNickname,
-		"message":      message,
+		"message":       message,
 	}
 	payload, _ := json.Marshal(notify)
 
 	h.mu.RLock()
-	conn, ok := h.conns[toUser.UID]
+	conn, ok := h.conns[toUser.QQNumber]
 	h.mu.RUnlock()
 
 	if ok {
@@ -542,29 +533,27 @@ func (h *Hub) notifyFriendRequest(fromUID string, toQQNumber int64, message stri
 	}
 }
 
-func (h *Hub) notifyFriendAccepted(fromUID string, fromQQNumber int64) {
-	fromUser, _ := h.svc.GetUserByQQNumber(fromQQNumber)
-	if fromUser == nil {
+func (h *Hub) notifyFriendAccepted(accepterQQ int64, requesterQQ int64) {
+	requester, _ := h.svc.GetUserByQQ(requesterQQ)
+	if requester == nil {
 		return
 	}
 
-	accepter, _ := h.svc.GetUserByUID(fromUID)
+	accepter, _ := h.svc.GetUserByQQ(accepterQQ)
 
 	notify := map[string]interface{}{
-		"type":           "friend_accepted",
-		"accepter_uid":   fromUID,
-		"accepter_qq":    int64(0),
-		"accepter_nickname": fromUID,
+		"type":              "friend_accepted",
+		"accepter_qq":       accepterQQ,
+		"accepter_nickname": "",
 	}
 	if accepter != nil {
-		notify["accepter_qq"] = accepter.QQNumber
 		notify["accepter_nickname"] = accepter.Nickname
 	}
 
 	payload, _ := json.Marshal(notify)
 
 	h.mu.RLock()
-	conn, ok := h.conns[fromUser.UID]
+	conn, ok := h.conns[requester.QQNumber]
 	h.mu.RUnlock()
 
 	if ok {
@@ -589,10 +578,10 @@ func (h *Hub) writeFriendResult(c *ws.Conn, result string) {
 	})
 }
 
-func (h *Hub) pushOfflineMessages(uid string) {
-	msgs, err := h.svc.GetOfflineMessages(uid)
+func (h *Hub) pushOfflineMessages(qq int64) {
+	msgs, err := h.svc.GetOfflineMessages(qq)
 	if err != nil {
-		log.Printf("[offline] query error for %s: %v", uid, err)
+		log.Printf("[offline] query error for qq=%d: %v", qq, err)
 		return
 	}
 
@@ -600,11 +589,11 @@ func (h *Hub) pushOfflineMessages(uid string) {
 		return
 	}
 
-	log.Printf("[offline] pushing %d messages to %s", len(msgs), uid)
+	log.Printf("[offline] pushing %d messages to qq=%d", len(msgs), qq)
 
 	for _, msg := range msgs {
 		h.mu.RLock()
-		conn, ok := h.conns[uid]
+		conn, ok := h.conns[qq]
 		h.mu.RUnlock()
 
 		if !ok {
@@ -614,8 +603,8 @@ func (h *Hub) pushOfflineMessages(uid string) {
 		sendMsg := &model.Message{
 			ID:        msg.ID,
 			MsgType:   msg.MsgType,
-			FromUID:   msg.FromUID,
-			ToUID:     msg.ToUID,
+			FromQQ:    msg.FromQQ,
+			ToQQ:      msg.ToQQ,
 			GroupID:   msg.GroupID,
 			Content:   msg.Content,
 			Delivered: msg.Delivered,
@@ -623,24 +612,24 @@ func (h *Hub) pushOfflineMessages(uid string) {
 		}
 
 		if err := conn.WriteJSON(sendMsg); err != nil {
-			log.Printf("[offline] push to %s error: %v", uid, err)
+			log.Printf("[offline] push to qq=%d error: %v", qq, err)
 			return
 		}
 	}
 }
 
-func (h *Hub) sendToUser(uid string, msg *model.Message) {
+func (h *Hub) sendToUser(qq int64, msg *model.Message) {
 	h.mu.RLock()
-	conn, ok := h.conns[uid]
+	conn, ok := h.conns[qq]
 	h.mu.RUnlock()
 
 	if !ok {
-		log.Printf("[send] target user %s offline, saved to DB for later delivery", uid)
+		log.Printf("[send] target user qq=%d offline, saved to DB for later delivery", qq)
 		return
 	}
 
 	if err := conn.WriteJSON(msg); err != nil {
-		log.Printf("[send] write to %s error: %v", uid, err)
+		log.Printf("[send] write to qq=%d error: %v", qq, err)
 	}
 }
 
@@ -654,33 +643,37 @@ func (h *Hub) broadcastToGroup(msg *model.Message) {
 	}
 
 	for uid := range members {
-		if uid != msg.FromUID {
-			h.sendToUser(uid, msg)
+		qq, err := strconv.ParseInt(uid, 10, 64)
+		if err != nil {
+			continue
+		}
+		if qq != msg.FromQQ {
+			h.sendToUser(qq, msg)
 		}
 	}
 }
 
-func (h *Hub) RemoveUser(uid string) {
+func (h *Hub) RemoveUser(qq int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if conn, ok := h.conns[uid]; ok {
+	if conn, ok := h.conns[qq]; ok {
 		conn.Close()
-		delete(h.conns, uid)
+		delete(h.conns, qq)
 	}
 
 	for gid, members := range h.groups {
-		delete(members, uid)
+		delete(members, strconv.FormatInt(qq, 10))
 		if len(members) == 0 {
 			delete(h.groups, gid)
 		}
 	}
 
 	if h.onStatus != nil {
-		h.onStatus(uid, false)
+		h.onStatus(qq, false)
 	}
 
-	log.Printf("[conn] user %s disconnected, online: %d", uid, len(h.conns))
+	log.Printf("[conn] user qq=%d disconnected, online: %d", qq, len(h.conns))
 }
 
 func (h *Hub) Count() int {
@@ -689,22 +682,22 @@ func (h *Hub) Count() int {
 	return len(h.conns)
 }
 
-func (h *Hub) JoinGroup(uid, groupID string) {
+func (h *Hub) JoinGroup(qq int64, groupID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if h.groups[groupID] == nil {
 		h.groups[groupID] = make(map[string]bool)
 	}
-	h.groups[groupID][uid] = true
+	h.groups[groupID][strconv.FormatInt(qq, 10)] = true
 }
 
-func (h *Hub) LeaveGroup(uid, groupID string) {
+func (h *Hub) LeaveGroup(qq int64, groupID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if members, ok := h.groups[groupID]; ok {
-		delete(members, uid)
+		delete(members, strconv.FormatInt(qq, 10))
 		if len(members) == 0 {
 			delete(h.groups, groupID)
 		}
