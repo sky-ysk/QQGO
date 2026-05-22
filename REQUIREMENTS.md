@@ -18,72 +18,113 @@
 | 需求 | 说明 | 状态 | 完成版本 |
 |------|------|------|----------|
 | **好友管理** | 搜索/添加/删除好友，好友列表，分组，备注 | ✅ done | v0.3 |
-| **QQ 号作为唯一标识** | 全系统 UID(string)→QQ(int64)，注册只需 nickname+password | 🚧 in progress | v0.4 |
-| **显示逻辑统一** | 所有展示位置：Remark > Nickname > QQ号 | 🚧 in progress | v0.4 |
-| **发送前置校验** | 只能给已存在用户发消息（BUG-007 重做） | 🚧 in progress | v0.4 |
-| **好友分组管理重做** | 分组需先创建再移动（friend_groups 表，QQ 号标识） | 🚧 in progress | v0.4 |
-| **客户端内登录** | `/login <qq> <password>` 命令，无需重启 client | 🚧 in progress | v0.4 |
-| **用户信息查询** | `/whoami` 查看当前账号 (nickname, QQ) | 🚧 in progress | v0.4 |
-| **优雅退出** | `/quit` 通过 WebSocket Close Frame 通知服务端（BUG-001/008） | 🚧 in progress | v0.4 |
-| **群组聊天** | 创建群、加群、群消息广播 | 🔲 pending | v0.4 |
-| **会话历史记录** | 选中会话后显示与该用户的聊天历史 | 🔲 pending | v0.4 |
-| **会话列表** | 列出所有会话（每个联系人/群一个会话窗口） | 🔲 pending | v0.4 |
+| **QQ 号作为唯一标识** | 全系统 UID(string)→QQ(int64)，注册只需 nickname+password | ✅ done | v0.4 |
+| **显示逻辑统一** | 所有展示位置：Remark > Nickname > QQ号，prompt 显示 nickname | ✅ done | v0.4 |
+| **发送前置校验** | 只能给已存在用户发消息（BUG-007 重做） | ✅ done | v0.4 |
+| **/to 前置校验** | `/to` 时校验用户是否存在，不存在则不允许进入对话 | ✅ done | v0.4 |
+| **好友分组管理重做** | 分组需先创建再移动（friend_groups 表，QQ 号标识） | ✅ done | v0.4 |
+| **空分组显示** | `/friends` 显示所有分组，包括空分组 | ✅ done | v0.4 |
+| **客户端内登录** | `/login <qq> <password>` 命令，无需重启 client | ✅ done | v0.4 |
+| **用户信息查询** | `/whoami` 查看当前账号 (nickname, QQ) | ✅ done | v0.4 |
+| **优雅退出** | `/quit` 通过 WebSocket Close Frame 通知服务端（BUG-001/008） | ✅ done | v0.4 |
+| **非好友消息限制** | 非好友只能发 1 条消息，后续消息失败；删除好友后可被搜索但发消息受限 | 🔲 pending | v0.5 |
+| **群组聊天** | 创建群、加群、群消息广播 | 🔲 pending | v0.5 |
+| **会话历史记录** | `/to` 后显示最近 30 条历史消息，支持翻页 | 🔲 pending | v0.5 |
+| **会话列表** | 列出所有会话（每个联系人/群一个会话窗口） | 🔲 pending | v0.5 |
 | **消息类型扩展** | 图片、文件、语音消息 | 🔲 pending | — |
 | **历史消息查询** | 按时间/会话拉取历史记录 | 🔲 pending | — |
 | **会话搜索** | 在历史记录中按关键词搜索 | 🔲 pending | — |
 
 ---
 
-### v0.4 计划详情
+### v0.4 计划详情（已完成）
 
-#### 0. QQ 号作为唯一标识 `P0`（2026-05-22 录入）
+#### 0. QQ 号作为唯一标识 `P0` ✅
 
-- **现状问题：** 当前系统使用 UID(string) 作为用户唯一标识，注册需要 uid+password+nickname，不符合 QQ 设计
+- 全系统 `UID(string)` → `QQ(int64)`
+- 注册只需 nickname + password
+- 登录使用 QQ 号 + password
+- 显示逻辑：Remark > Nickname > QQ号
+
+#### 1. 优雅退出 `P1`（BUG-001/008）✅
+
+- 客户端 `/quit` 发送 WebSocket Close Frame
+- 客户端/服务端优雅处理 close 1000 (normal)
+
+#### 2. 发送前置校验 `P1`（BUG-007 重做）✅
+
+- `sendToUser` 前查 `users` 表校验目标 QQ 号存在
+
+#### 3. /to 前置校验 `P1` ✅
+
+- `/to <qq>` 时通过 `MsgTypeCheckUser` 校验用户是否存在
+- 不存在则不允许进入对话
+
+#### 4. 好友分组管理重做 `P1` ✅
+
+- 需先 `/creategroup` 创建分组再移动好友
+- 新建 `friend_groups` 表（QQ 号标识）
+
+#### 5. 空分组显示 `P1` ✅
+
+- `/friends` 显示所有分组，包括空分组
+- FriendListResponse 增加 AllGroups 字段
+
+#### 6. 客户端内登录 `/login` `P1` ✅
+
+#### 7. 用户信息查询 `/whoami` `P1` ✅
+
+- 显示 nickname + QQ 号
+
+---
+
+### v0.5 计划详情
+
+#### 1. 非好友消息限制 `P1`（2026-05-22 录入）
+
+- **现状问题：** 任何用户都可以给任何其他用户发消息并存储
 - **目标行为：**
-  - QQ 号（QQNumber）作为全系统唯一标识
-  - 注册只需 nickname + password，自动分配 QQ 号
-  - 登录使用 QQ 号 + password
-  - 全系统 `UID(string)` → `QQ(int64)`：User、Message(FromUID/ToUID→FromQQ/ToQQ)、Friend(UID/FriendUID→QQ/FriendQQ)、FriendGroup、Conn、Hub.conns
-  - 显示逻辑统一：`Remark > Nickname > QQ号`
-  - `Friend.Remark` 保留作为好友备注
-  - User.Nickname 保留作为用户全局昵称
-- **数据库：** 需删库重建（字段类型变更，AutoMigrate 不支持）
+  - 好友之间可以自由发消息（无限制）
+  - 非好友只能发送 **1 条**消息给对方（最后一条消息会被保存）
+  - 发送第 2+ 条消息时返回错误："not friend, only 1 message allowed"
+  - 删除好友后：
+    - 对方仍可被搜索到
+    - 给对方发消息时提示"已不是好友，只能发送 1 条消息"
+    - 超过 1 条的消息发送失败
+  - 重新加回好友后恢复正常
+- **实现方案：**
+  - 新建 `message_counts` 表：`(from_qq, to_qq, count)`，记录非好友消息计数
+  - 发送消息时：检查好友关系 → 是好友则无限制 → 非好友则检查 count < 1
+  - 接受好友请求时：清除双方的 message_counts 记录
+  - 删除好友时：保留 message_counts（如果之前有非好友消息）
 
-#### 1. 优雅退出 `P1`（BUG-001/008）
+#### 2. 会话历史记录 `P1`（2026-05-22 录入）
 
-- **现状问题：** `/quit` 直接 `conn.Close()` + `os.Exit(0)`，未通过 WebSocket Close Frame 通知服务端
 - **目标行为：**
-  - 客户端 `/quit` 发送 WebSocket Close Frame
-  - 服务端收到 Close Frame 后正常清理连接
-  - 避免对端出现 `read error: use of closed network connection`
+  - `/to <qq>` 切换会话后，自动拉取最近 30 条历史消息并展示
+  - 消息按时间升序排列（从上到下），每条包含：方向标识、时间戳、内容
+  - 方向标识：`[我]` 表示我发的，`[对方昵称]` 表示对方发的
+  - 格式示例：
+    ```
+    ───── History with Alice (QQ:10001) ─────
+    [Alice] 16:30:01  你好！
+    [我]    16:30:15  你好，有什么事？
+    [Alice] 16:31:02  想问一下...
+    ─────────────────────────────────────────
+    ```
+  - 翻页接口：
+    - `/prev` 或 `/history prev` — 向上翻 30 条（更早的消息）
+    - `/next` 或 `/history next` — 向下翻 30 条（更晚的消息）
+  - 服务端接口：按 `(from_qq, to_qq)` 或 `(to_qq, from_qq)` 查询，支持分页（offset + limit）
+- **实现方案：**
+  - 新增消息类型 `MsgTypeHistory = 312`
+  - 客户端 `/to <qq>` 成功后自动发送 history 请求
+  - 服务端查询 messages 表，按 created_at 排序，limit 30
+  - 翻页时传递 offset 参数
 
-#### 2. 发送前置校验 `P1`（BUG-007 重做）
+#### 3. 群组聊天 `P1`
 
-- **现状问题：** `/to` 不存在的用户后发消息，消息被存入数据库但目标永远收不到
-- **目标行为：** `sendToUser` 前查 `users` 表校验目标 QQ 号存在，不存在则返回错误并拒绝存储
-
-#### 3. 好友分组管理重做 `P1`
-
-- **目标行为：** 需先 `/creategroup` 创建分组再移动好友，新建 `friend_groups` 表（QQ 号标识）
-
-#### 4. 客户端内登录 `/login` `P1`
-
-- **目标行为：** `/login <qq> <password>` 在已连接的 WebSocket 上重新登录，登录成功更新 `c.QQ`
-
-#### 5. 用户信息查询 `/whoami` `P1`
-
-- **目标行为：** 显示当前登录用户的信息：nickname、QQ 号
-
-#### 6. 群组聊天 `P1`
-
-#### 7. 会话历史记录 `P1`
-
-#### 8. 会话列表 `P1`
-
-#### 9. 数据库 Schema 迁移 `P1`
-
-- **现状问题：** 每次改模型需要删除 `qqgo.db` 重新建表
-- **目标：** GORM AutoMigrate 已支持新增列/表，建立迁移规范
+#### 4. 会话列表 `P1`
 
 ---
 
@@ -115,7 +156,6 @@
 | 需求 | 说明 | 优先级 | 备注 |
 |------|------|--------|------|
 | **Token 持久化客户端** | 客户端保存 token，下次启动免密码登录 | P1 | — |
-| **优雅退出** | `/quit` 通过 WebSocket Close Frame 通知服务端 | P1 | BUG-001, BUG-008 |
 | **数据库管理接口** | 数据导出/备份/清理接口 | P2 | 测试中提出，原文不完整 |
 | **修改密码** | `/changepw` 命令 | P2 | — |
 | **消息撤回** | 发送方撤回已发送消息 | P2 | — |
