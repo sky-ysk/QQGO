@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/qqgo/server/internal/model"
@@ -165,6 +166,8 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		fmt.Println("  /quit                                 - exit")
 
 	case "/quit":
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		time.Sleep(100 * time.Millisecond)
 		conn.Close()
 		os.Exit(0)
 

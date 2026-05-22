@@ -263,6 +263,19 @@ func (h *Hub) handleHeartbeat(c *ws.Conn) {
 func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
 	msg.FromQQ = c.QQ
 
+	if msg.GroupID == "" {
+		if _, err := h.svc.GetUserByQQ(msg.ToQQ); err != nil {
+			log.Printf("[chat] target QQ %d not found", msg.ToQQ)
+			c.WriteJSON(&model.Message{
+				MsgType:   model.MsgTypeServerAck,
+				ID:        -1,
+				ClientSeq: msg.ClientSeq,
+				Content:   "user not found",
+			})
+			return
+		}
+	}
+
 	if err := h.svc.HandleMessage(context.Background(), msg); err != nil {
 		log.Printf("[chat] store error: %v", err)
 		c.WriteJSON(&model.Message{
