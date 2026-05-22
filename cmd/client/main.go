@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	currentUser string
-	targetUID   string
-	myQQNumber  int64
-	clientSeq   int64
-	sentCount   int
+	currentQQ      int64
+	targetQQ       int64
+	myQQNumber     int64
+	clientSeq      int64
+	sentCount      int
+	pendingLoginQQ int64
 )
 
 func handleCommand(conn *websocket.Conn, text string) bool {
@@ -31,18 +32,35 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 	switch parts[0] {
 	case "/to":
 		if len(parts) < 2 {
-			fmt.Println("[cmd] Usage: /to <uid>")
+			fmt.Println("[cmd] Usage: /to <qq_number>")
 			return true
 		}
-		targetUID = parts[1]
-		fmt.Printf("[cmd] switched to chatting with %s\n", targetUID)
+		qq, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			fmt.Println("[cmd] invalid QQ number")
+			return true
+		}
+		targetQQ = qq
+		fmt.Printf("[cmd] switched to chatting with %d\n", targetQQ)
 
 	case "/register":
 		if len(parts) < 3 {
 			fmt.Println("[cmd] Usage: /register <password> <nickname>")
 			return true
 		}
-		registerUser(conn, currentUser, parts[1], parts[2])
+		registerUser(conn, parts[1], parts[2])
+
+	case "/login":
+		if len(parts) < 3 {
+			fmt.Println("[cmd] Usage: /login <qq_number> <password>")
+			return true
+		}
+		qq, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			fmt.Println("[cmd] invalid QQ number")
+			return true
+		}
+		loginUser(conn, qq, parts[2])
 
 	case "/addfriend":
 		if len(parts) < 2 {
@@ -112,28 +130,39 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		remarkFriend(conn, qqNum, remark)
 
 	case "/who":
-		if targetUID == "" {
-			fmt.Println("[cmd] no target set, use /to <uid>")
+		if targetQQ == 0 {
+			fmt.Println("[cmd] no target set, use /to <qq_number>")
 		} else {
-			fmt.Printf("[cmd] chatting with %s\n", targetUID)
+			fmt.Printf("[cmd] chatting with %d\n", targetQQ)
+		}
+
+	case "/whoami":
+		if myQQNumber == 0 {
+			fmt.Println("[cmd] not logged in")
+		} else {
+			fmt.Printf("[cmd] QQ: %d\n", myQQNumber)
 		}
 
 	case "/help":
 		fmt.Println("[cmd] Commands:")
-		fmt.Println("  /register <password> <nickname>     - create account")
-		fmt.Println("  /to <uid>                           - switch chat target")
-		fmt.Println("  /who                                - show current target")
-		fmt.Println("  /addfriend <qq_number> [message]    - send friend request")
-		fmt.Println("  /accept <qq_number>                 - accept friend request")
-		fmt.Println("  /reject <qq_number>                 - reject friend request")
-		fmt.Println("  /delfriend <qq_number>              - delete friend")
-		fmt.Println("  /friends                            - list friends")
-		fmt.Println("  /search <keyword>                   - search users")
-		fmt.Println("  /movefriend <qq_number> <group>     - move friend to group")
-		fmt.Println("  /groups                             - list friend groups")
-		fmt.Println("  /remark <qq_number> <remark>        - set friend remark")
-		fmt.Println("  /help                               - show this help")
-		fmt.Println("  /quit                               - exit")
+		fmt.Println("  /register <password> <nickname>       - create account")
+		fmt.Println("  /login <qq_number> <password>         - login")
+		fmt.Println("  /to <qq_number>                       - switch chat target")
+		fmt.Println("  /who                                  - show current target")
+		fmt.Println("  /whoami                               - show current account info")
+		fmt.Println("  /addfriend <qq_number> [message]      - send friend request")
+		fmt.Println("  /accept <qq_number>                   - accept friend request")
+		fmt.Println("  /reject <qq_number>                   - reject friend request")
+		fmt.Println("  /delfriend <qq_number>                - delete friend")
+		fmt.Println("  /friends                              - list friends")
+		fmt.Println("  /search <keyword>                     - search users")
+		fmt.Println("  /movefriend <qq_number> <group>       - move friend to group")
+		fmt.Println("  /groups                               - list friend groups")
+		fmt.Println("  /creategroup <name>                   - create friend group")
+		fmt.Println("  /delgroup <name>                      - delete friend group")
+		fmt.Println("  /remark <qq_number> <remark>          - set friend remark")
+		fmt.Println("  /help                                 - show this help")
+		fmt.Println("  /quit                                 - exit")
 
 	case "/quit":
 		conn.Close()
@@ -145,9 +174,9 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 	return true
 }
 
-func registerUser(conn *websocket.Conn, uid, password, nickname string) {
+func registerUser(conn *websocket.Conn, password, nickname string) {
+	pendingLoginQQ = 0
 	payload, _ := json.Marshal(&model.RegisterRequest{
-		UID:      uid,
 		Password: password,
 		Nickname: nickname,
 	})
@@ -156,7 +185,7 @@ func registerUser(conn *websocket.Conn, uid, password, nickname string) {
 		Content: string(payload),
 	})
 	conn.WriteMessage(websocket.TextMessage, msg)
-	fmt.Printf("[cmd] register request sent for %s\n", uid)
+	fmt.Printf("[cmd] register request sent for %s\n", nickname)
 }
 
 func addFriend(conn *websocket.Conn, qqNumber int64, message string) {
@@ -256,43 +285,34 @@ func remarkFriend(conn *websocket.Conn, qqNumber int64, remark string) {
 	fmt.Printf("[cmd] setting remark for qq=%d: %s\n", qqNumber, remark)
 }
 
-func login(conn *websocket.Conn, uid, password string) {
-	loginPayload, _ := json.Marshal(&model.LoginRequest{
-		UID:      uid,
+func loginUser(conn *websocket.Conn, qq int64, password string) {
+	pendingLoginQQ = qq
+	payload, _ := json.Marshal(&model.LoginRequest{
+		QQ:       qq,
 		Password: password,
 		Platform: "cli",
 	})
-	loginMsg, _ := json.Marshal(&model.Message{
+	msg, _ := json.Marshal(&model.Message{
 		MsgType: model.MsgTypeLogin,
-		Content: string(loginPayload),
+		Content: string(payload),
 	})
-
-	fmt.Printf("[client] sending login for %s\n", uid)
-	if err := conn.WriteMessage(websocket.TextMessage, loginMsg); err != nil {
-		log.Fatalf("login write error: %v", err)
-	}
+	conn.WriteMessage(websocket.TextMessage, msg)
+	fmt.Printf("[cmd] login request sent for %d\n", qq)
 }
 
 func prompt() {
-	if targetUID == "" {
-		fmt.Print("(no target) > ")
+	if myQQNumber == 0 {
+		fmt.Print("(not logged in) > ")
+	} else if targetQQ == 0 {
+		fmt.Printf("(%d) > ", myQQNumber)
 	} else {
-		fmt.Printf("[%s] > ", targetUID)
+		fmt.Printf("[%d -> %d] > ", myQQNumber, targetQQ)
 	}
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: client <uid> <password>")
-		fmt.Println("  First time: client <uid> <password>  then use /register <password> <nickname>")
-		os.Exit(1)
-	}
-
-	currentUser = os.Args[1]
-	password := os.Args[2]
-
 	addr := "ws://localhost:8080/ws"
-	fmt.Printf("Connecting to %s as user %s...\n", addr, currentUser)
+	fmt.Printf("Connecting to %s...\n", addr)
 
 	conn, _, err := websocket.DefaultDialer.Dial(addr, nil)
 	if err != nil {
@@ -300,7 +320,8 @@ func main() {
 	}
 	defer conn.Close()
 
-	login(conn, currentUser, password)
+	fmt.Println("Welcome to QQGO! Use /login or /register to get started.")
+	prompt()
 
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
@@ -324,9 +345,14 @@ func main() {
 				var resp model.LoginResponse
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
 					if resp.Code == 0 {
+						if pendingLoginQQ != 0 {
+							currentQQ = pendingLoginQQ
+							pendingLoginQQ = 0
+						}
 						myQQNumber = resp.QQNumber
 						fmt.Printf("\r[Server]: login ok, QQ=%d, online=%d\n> ", myQQNumber, resp.Online)
 					} else {
+						pendingLoginQQ = 0
 						fmt.Printf("\r[Server]: login failed - %s\n> ", resp.Message)
 					}
 				}
@@ -354,7 +380,7 @@ func main() {
 				prompt()
 
 			case model.MsgTypeText:
-				fmt.Printf("\r[%s -> %s]: %s\n> ", msg.FromUID, msg.ToUID, msg.Content)
+				fmt.Printf("\r[%d -> %d]: %s\n> ", msg.FromQQ, msg.ToQQ, msg.Content)
 
 				ackPayload, _ := json.Marshal(&model.AckRequest{MessageID: msg.ID})
 				ackMsg := &model.Message{
@@ -403,14 +429,14 @@ func main() {
 				prompt()
 
 			default:
-				fmt.Printf("\r[%s]: %s\n> ", msg.FromUID, msg.Content)
+				fmt.Printf("\r[%d]: %s\n> ", msg.FromQQ, msg.Content)
 				prompt()
 			}
 		}
 	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("Type /help for commands, /to <uid> to start chatting:")
+	fmt.Println("Type /help for commands, /to <qq_number> to start chatting:")
 	prompt()
 
 	for scanner.Scan() {
@@ -432,8 +458,8 @@ func main() {
 			continue
 		}
 
-		if targetUID == "" {
-			fmt.Println("[cmd] no target set, use /to <uid> first")
+		if targetQQ == 0 {
+			fmt.Println("[cmd] no target set, use /to <qq_number> first")
 			prompt()
 			continue
 		}
@@ -443,8 +469,8 @@ func main() {
 		msg := &model.Message{
 			ClientSeq: clientSeq,
 			MsgType:   model.MsgTypeText,
-			FromUID:   currentUser,
-			ToUID:     targetUID,
+			FromQQ:    currentQQ,
+			ToQQ:      targetQQ,
 			Content:   text,
 		}
 
@@ -480,7 +506,7 @@ func displayFriendList(friends []model.FriendInfo) {
 				if f.Remark != "" {
 					displayName = f.Remark + "(" + f.Nickname + ")"
 				}
-				fmt.Printf("    %s QQ:%d  %s  [%s]\n", statusIcon, f.QQNumber, displayName, f.UID)
+				fmt.Printf("    %s QQ:%d  %s\n", statusIcon, f.QQNumber, displayName)
 			}
 			displayed[g] = true
 		}
@@ -498,7 +524,7 @@ func displayFriendList(friends []model.FriendInfo) {
 				if f.Remark != "" {
 					displayName = f.Remark + "(" + f.Nickname + ")"
 				}
-				fmt.Printf("    %s QQ:%d  %s  [%s]\n", statusIcon, f.QQNumber, displayName, f.UID)
+				fmt.Printf("    %s QQ:%d  %s\n", statusIcon, f.QQNumber, displayName)
 			}
 		}
 	}
@@ -516,7 +542,7 @@ func displaySearchResults(results []model.UserSearchResult) {
 			if r.Online {
 				statusIcon = "●"
 			}
-			fmt.Printf("  %s QQ:%d  %s  [%s]\n", statusIcon, r.QQNumber, r.Nickname, r.UID)
+			fmt.Printf("  %s QQ:%d  %s\n", statusIcon, r.QQNumber, r.Nickname)
 		}
 	}
 	fmt.Println("──────────────────────────")
