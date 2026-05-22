@@ -130,6 +130,20 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		remark := strings.Join(parts[2:], " ")
 		remarkFriend(conn, qqNum, remark)
 
+	case "/creategroup":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /creategroup <name>")
+			return true
+		}
+		createGroup(conn, strings.Join(parts[1:], " "))
+
+	case "/delgroup":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /delgroup <name>")
+			return true
+		}
+		deleteGroup(conn, strings.Join(parts[1:], " "))
+
 	case "/who":
 		if targetQQ == 0 {
 			fmt.Println("[cmd] no target set, use /to <qq_number>")
@@ -286,6 +300,24 @@ func remarkFriend(conn *websocket.Conn, qqNumber int64, remark string) {
 	})
 	conn.WriteMessage(websocket.TextMessage, msg)
 	fmt.Printf("[cmd] setting remark for qq=%d: %s\n", qqNumber, remark)
+}
+
+func createGroup(conn *websocket.Conn, name string) {
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeFriendCreateGroup,
+		Content: name,
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+	fmt.Printf("[cmd] creating group '%s'\n", name)
+}
+
+func deleteGroup(conn *websocket.Conn, name string) {
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeFriendDeleteGroup,
+		Content: name,
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+	fmt.Printf("[cmd] deleting group '%s'\n", name)
 }
 
 func loginUser(conn *websocket.Conn, qq int64, password string) {

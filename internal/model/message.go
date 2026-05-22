@@ -28,8 +28,10 @@ const (
 	MsgTypeFriendSearch     MessageType = 305
 	MsgTypeFriendMoveGroup  MessageType = 306
 	MsgTypeFriendRemark     MessageType = 307
-	MsgTypeFriendGroups     MessageType = 308
-	MsgTypeGroupCreate      MessageType = 200
+	MsgTypeFriendGroups      MessageType = 308
+	MsgTypeFriendCreateGroup MessageType = 309
+	MsgTypeFriendDeleteGroup MessageType = 310
+	MsgTypeGroupCreate       MessageType = 200
 	MsgTypeGroupJoin        MessageType = 201
 	MsgTypeGroupLeave       MessageType = 202
 )

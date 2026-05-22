@@ -48,6 +48,8 @@ type Service interface {
 	MoveFriendGroup(qq int64, friendQQ int64, groupName string) error
 	GetFriendGroups(qq int64) ([]string, error)
 	SetRemark(qq int64, friendQQ int64, remark string) error
+	CreateFriendGroup(qq int64, name string) error
+	DeleteFriendGroup(qq int64, name string) error
 	GetUserByQQ(qq int64) (*model.User, error)
 }
 
@@ -122,6 +124,10 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleFriendRemark(c, &msg)
 	case model.MsgTypeFriendGroups:
 		h.handleFriendGroups(c, &msg)
+	case model.MsgTypeFriendCreateGroup:
+		h.handleFriendCreateGroup(c, &msg)
+	case model.MsgTypeFriendDeleteGroup:
+		h.handleFriendDeleteGroup(c, &msg)
 	case model.MsgTypeText, model.MsgTypeImage, model.MsgTypeFile:
 		h.handleChatMessage(c, &msg)
 	default:
@@ -512,6 +518,32 @@ func (h *Hub) handleFriendGroups(c *ws.Conn, msg *model.Message) {
 		MsgType: model.MsgTypeFriendGroups,
 		Content: string(payload),
 	})
+}
+
+func (h *Hub) handleFriendCreateGroup(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+	if err := h.svc.CreateFriendGroup(c.QQ, msg.Content); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+	log.Printf("[friend] group created: qq=%d name=%s", c.QQ, msg.Content)
+	h.writeFriendResult(c, "group created")
+}
+
+func (h *Hub) handleFriendDeleteGroup(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+	if err := h.svc.DeleteFriendGroup(c.QQ, msg.Content); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+	log.Printf("[friend] group deleted: qq=%d name=%s", c.QQ, msg.Content)
+	h.writeFriendResult(c, "group deleted")
 }
 
 func (h *Hub) notifyFriendRequest(fromQQ int64, toQQ int64, message string) {

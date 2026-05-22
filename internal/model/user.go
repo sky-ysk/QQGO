@@ -51,3 +51,10 @@ type GroupMember struct {
 	Role     int       `gorm:"default:0" json:"role"`
 	JoinedAt time.Time `gorm:"autoCreateTime" json:"joined_at"`
 }
+
+type FriendGroup struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"-"`
+	QQ        int64     `gorm:"uniqueIndex:idx_qq_group;not null" json:"qq"`
+	GroupName string    `gorm:"uniqueIndex:idx_qq_group;size:64;not null" json:"group_name"`
+	CreatedAt time.Time `json:"created_at"`
+}

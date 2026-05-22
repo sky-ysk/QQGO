@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
 
 	"github.com/qqgo/server/internal/model"
 	"golang.org/x/crypto/bcrypt"
@@ -22,6 +23,8 @@ var (
 	ErrFriendLimit   = errors.New("friend limit reached")
 	ErrAlreadyFriend = errors.New("already friend or pending")
 	ErrNotFriend     = errors.New("not friend")
+	ErrGroupNotFound = errors.New("group not found")
+	ErrGroupNotEmpty = errors.New("group is not empty")
 )
 
 type ChatService struct {
@@ -312,12 +315,21 @@ func (s *ChatService) SearchUsers(keyword string, onlineFunc func(int64) bool) (
 }
 
 func (s *ChatService) MoveFriendGroup(qq int64, friendQQ int64, groupName string) error {
-	if _, err := s.GetUserByQQ(friendQQ); err != nil {
+	friendUser, err := s.GetUserByQQ(friendQQ)
+	if err != nil {
 		return ErrUserNotFound
 	}
 
+	if groupName != "我的好友" {
+		var count int64
+		s.db.Model(&model.FriendGroup{}).Where("qq = ? AND group_name = ?", qq, groupName).Count(&count)
+		if count == 0 {
+			return ErrGroupNotFound
+		}
+	}
+
 	result := s.db.Model(&model.Friend{}).
-		Where("qq = ? AND friend_qq = ? AND status = ?", qq, friendQQ, model.FriendStatusAccepted).
+		Where("qq = ? AND friend_qq = ? AND status = ?", qq, friendUser.QQNumber, model.FriendStatusAccepted).
 		Update("group_name", groupName)
 	if result.RowsAffected == 0 {
 		return ErrNotFriend
@@ -326,27 +338,37 @@ func (s *ChatService) MoveFriendGroup(qq int64, friendQQ int64, groupName string
 }
 
 func (s *ChatService) GetFriendGroups(qq int64) ([]string, error) {
-	var groups []string
-	err := s.db.Model(&model.Friend{}).
-		Where("qq = ? AND status = ?", qq, model.FriendStatusAccepted).
-		Distinct("group_name").
-		Pluck("group_name", &groups).Error
-	if err != nil {
+	var friendGroups []string
+	if err := s.db.Model(&model.FriendGroup{}).Where("qq = ?", qq).Pluck("group_name", &friendGroups).Error; err != nil {
 		return nil, err
 	}
 
-	hasDefault := false
-	for _, g := range groups {
-		if g == "我的好友" {
-			hasDefault = true
-			break
-		}
-	}
-	if !hasDefault {
-		groups = append([]string{"我的好友"}, groups...)
+	var friendGroupNames []string
+	if err := s.db.Model(&model.Friend{}).
+		Where("qq = ? AND status = ?", qq, model.FriendStatusAccepted).
+		Distinct("group_name").
+		Pluck("group_name", &friendGroupNames).Error; err != nil {
+		return nil, err
 	}
 
-	return groups, nil
+	seen := make(map[string]bool)
+	seen["我的好友"] = true
+	result := []string{"我的好友"}
+
+	for _, g := range friendGroups {
+		if !seen[g] {
+			seen[g] = true
+			result = append(result, g)
+		}
+	}
+	for _, g := range friendGroupNames {
+		if !seen[g] && g != "" {
+			seen[g] = true
+			result = append(result, g)
+		}
+	}
+
+	return result, nil
 }
 
 func (s *ChatService) SetRemark(qq int64, friendQQ int64, remark string) error {
@@ -359,6 +381,39 @@ func (s *ChatService) SetRemark(qq int64, friendQQ int64, remark string) error {
 		Update("remark", remark)
 	if result.RowsAffected == 0 {
 		return ErrNotFriend
+	}
+	return nil
+}
+
+func (s *ChatService) CreateFriendGroup(qq int64, name string) error {
+	if name == "" || name == "待处理" || name == "我的好友" {
+		return errors.New("invalid group name")
+	}
+	fg := &model.FriendGroup{QQ: qq, GroupName: name}
+	err := s.db.Create(fg).Error
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate") {
+			return errors.New("group already exists")
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *ChatService) DeleteFriendGroup(qq int64, name string) error {
+	if name == "我的好友" {
+		return errors.New("cannot delete default group")
+	}
+	var count int64
+	if err := s.db.Model(&model.Friend{}).Where("qq = ? AND group_name = ? AND status = ?", qq, name, model.FriendStatusAccepted).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrGroupNotEmpty
+	}
+	result := s.db.Where("qq = ? AND group_name = ?", qq, name).Delete(&model.FriendGroup{})
+	if result.RowsAffected == 0 {
+		return ErrGroupNotFound
 	}
 	return nil
 }
