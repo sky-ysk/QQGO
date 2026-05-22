@@ -18,6 +18,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 	if err := db.AutoMigrate(
 		&model.User{},
 		&model.Friend{},
+		&model.FriendGroup{},
 		&model.Group{},
 		&model.GroupMember{},
 		&model.Message{},

@@ -6,8 +6,7 @@ const QQNumberBase = 10000
 
 type User struct {
 	ID           uint      `gorm:"primaryKey" json:"-"`
-	UID          string    `gorm:"uniqueIndex;size:64;not null" json:"uid"`
-	QQNumber     int64     `gorm:"uniqueIndex;default:0" json:"qq_number"`
+	QQNumber     int64     `gorm:"uniqueIndex;not null" json:"qq_number"`
 	PasswordHash string    `gorm:"size:128;not null" json:"-"`
 	Token        string    `gorm:"size:128" json:"-"`
 	Nickname     string    `gorm:"size:64" json:"nickname"`
@@ -19,8 +18,8 @@ type User struct {
 
 type Friend struct {
 	ID        uint      `gorm:"primaryKey" json:"-"`
-	UID       string    `gorm:"uniqueIndex:idx_uid_friend;size:64;not null" json:"uid"`
-	FriendUID string    `gorm:"uniqueIndex:idx_uid_friend;size:64;not null" json:"friend_uid"`
+	QQ        int64     `gorm:"uniqueIndex:idx_qq_friend;not null" json:"qq"`
+	FriendQQ  int64     `gorm:"uniqueIndex:idx_qq_friend;not null" json:"friend_qq"`
 	Remark    string    `gorm:"size:64" json:"remark"`
 	GroupName string    `gorm:"size:64;default:我的好友" json:"group_name"`
 	Status    int       `gorm:"default:0;index" json:"status"`
@@ -51,4 +50,11 @@ type GroupMember struct {
 	UID      string    `gorm:"index;size:64;not null" json:"uid"`
 	Role     int       `gorm:"default:0" json:"role"`
 	JoinedAt time.Time `gorm:"autoCreateTime" json:"joined_at"`
+}
+
+type FriendGroup struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"-"`
+	QQ        int64     `gorm:"uniqueIndex:idx_qq_group;not null" json:"qq"`
+	GroupName string    `gorm:"uniqueIndex:idx_qq_group;size:64;not null" json:"group_name"`
+	CreatedAt time.Time `json:"created_at"`
 }

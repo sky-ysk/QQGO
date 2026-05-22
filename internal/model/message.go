@@ -28,8 +28,11 @@ const (
 	MsgTypeFriendSearch     MessageType = 305
 	MsgTypeFriendMoveGroup  MessageType = 306
 	MsgTypeFriendRemark     MessageType = 307
-	MsgTypeFriendGroups     MessageType = 308
-	MsgTypeGroupCreate      MessageType = 200
+	MsgTypeFriendGroups      MessageType = 308
+	MsgTypeFriendCreateGroup MessageType = 309
+	MsgTypeFriendDeleteGroup MessageType = 310
+	MsgTypeCheckUser         MessageType = 311
+	MsgTypeGroupCreate       MessageType = 200
 	MsgTypeGroupJoin        MessageType = 201
 	MsgTypeGroupLeave       MessageType = 202
 )
@@ -40,8 +43,8 @@ type Message struct {
 	ID        int64       `gorm:"primaryKey;autoIncrement" json:"id"`
 	ClientSeq int64       `gorm:"default:0" json:"client_seq,omitempty"`
 	MsgType   MessageType `gorm:"not null;index" json:"msg_type"`
-	FromUID   string      `gorm:"index;not null" json:"from_uid"`
-	ToUID     string      `gorm:"index;not null" json:"to_uid"`
+	FromQQ    int64       `gorm:"index;not null" json:"from_qq"`
+	ToQQ      int64       `gorm:"index;not null" json:"to_qq"`
 	GroupID   string      `gorm:"index" json:"group_id,omitempty"`
 	Content   string      `gorm:"not null" json:"content"`
 	Delivered bool        `gorm:"default:false" json:"delivered"`
@@ -50,7 +53,7 @@ type Message struct {
 }
 
 type LoginRequest struct {
-	UID      string `json:"uid"`
+	QQ       int64  `json:"qq"`
 	Password string `json:"password,omitempty"`
 	Token    string `json:"token,omitempty"`
 	Platform string `json:"platform"`
@@ -62,10 +65,10 @@ type LoginResponse struct {
 	Token    string `json:"token,omitempty"`
 	Online   int    `json:"online"`
 	QQNumber int64  `json:"qq_number,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
 }
 
 type RegisterRequest struct {
-	UID      string `json:"uid"`
 	Password string `json:"password"`
 	Nickname string `json:"nickname"`
 }
@@ -86,12 +89,12 @@ type FriendRequestPayload struct {
 }
 
 type FriendListResponse struct {
-	Friends []FriendInfo `json:"friends"`
+	Friends   []FriendInfo `json:"friends"`
+	AllGroups []string     `json:"all_groups"`
 }
 
 type FriendInfo struct {
 	QQNumber  int64  `json:"qq_number"`
-	UID       string `json:"uid"`
 	Nickname  string `json:"nickname"`
 	Remark    string `json:"remark,omitempty"`
 	GroupName string `json:"group_name"`
@@ -101,11 +104,18 @@ type FriendInfo struct {
 
 type UserSearchResult struct {
 	QQNumber int64  `json:"qq_number"`
-	UID      string `json:"uid"`
 	Nickname string `json:"nickname"`
 	Online   bool   `json:"online"`
 }
 
 type FriendGroupListResponse struct {
 	Groups []string `json:"groups"`
+}
+
+type CheckUserResponse struct {
+	Code     int    `json:"code"`
+	Message  string `json:"message"`
+	QQNumber int64  `json:"qq_number,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+	Online   bool   `json:"online"`
 }
