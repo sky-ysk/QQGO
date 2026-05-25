@@ -32,9 +32,13 @@ const (
 	MsgTypeFriendCreateGroup MessageType = 309
 	MsgTypeFriendDeleteGroup MessageType = 310
 	MsgTypeCheckUser         MessageType = 311
+	MsgTypeHistory           MessageType = 312
+	MsgTypeSessionList       MessageType = 313
 	MsgTypeGroupCreate       MessageType = 200
 	MsgTypeGroupJoin        MessageType = 201
 	MsgTypeGroupLeave       MessageType = 202
+	MsgTypeGroupList        MessageType = 203
+	MsgTypeGroupInfo        MessageType = 204
 )
 
 const MaxFriends = 500
@@ -118,4 +122,68 @@ type CheckUserResponse struct {
 	QQNumber int64  `json:"qq_number,omitempty"`
 	Nickname string `json:"nickname,omitempty"`
 	Online   bool   `json:"online"`
+}
+
+type HistoryRequest struct {
+	TargetQQ int64 `json:"target_qq"`
+	Offset   int   `json:"offset"`
+	Limit    int   `json:"limit"`
+}
+
+type HistoryMessage struct {
+	ID        int64     `json:"id"`
+	FromQQ    int64     `json:"from_qq"`
+	ToQQ      int64     `json:"to_qq"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type HistoryResponse struct {
+	TargetQQ int64            `json:"target_qq"`
+	Nickname string           `json:"nickname"`
+	Messages []HistoryMessage `json:"messages"`
+	Offset   int              `json:"offset"`
+	HasMore  bool             `json:"has_more"`
+}
+
+type GroupCreateRequest struct {
+	Name string `json:"name"`
+}
+
+type GroupInfo struct {
+	GroupID   string `json:"group_id"`
+	Name      string `json:"name"`
+	OwnerQQ   int64  `json:"owner_qq"`
+	MemberCnt int    `json:"member_cnt"`
+}
+
+type GroupListResponse struct {
+	Groups []GroupInfo `json:"groups"`
+}
+
+type GroupMembersResponse struct {
+	GroupID string         `json:"group_id"`
+	Members []GroupMemberInfo `json:"members"`
+}
+
+type GroupMemberInfo struct {
+	QQ       int64  `json:"qq"`
+	Nickname string `json:"nickname"`
+	Role     int    `json:"role"`
+	Online   bool   `json:"online"`
+}
+
+type SessionInfo struct {
+	Type         string    `json:"type"`
+	TargetQQ     int64     `json:"target_qq,omitempty"`
+	GroupID      string    `json:"group_id,omitempty"`
+	Nickname     string    `json:"nickname"`
+	LastMessage  string    `json:"last_message"`
+	LastTime     time.Time `json:"last_time"`
+	Online       bool      `json:"online,omitempty"`
+	UnreadCount  int       `json:"unread_count,omitempty"`
+}
+
+type SessionListResponse struct {
+	Sessions []SessionInfo `json:"sessions"`
 }

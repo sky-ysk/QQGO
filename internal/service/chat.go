@@ -6,9 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/qqgo/server/internal/model"
 	"golang.org/x/crypto/bcrypt"
@@ -16,15 +19,16 @@ import (
 )
 
 var (
-	ErrUserExists    = errors.New("user already exists")
-	ErrUserNotFound  = errors.New("user not found")
-	ErrAuthFailed    = errors.New("auth failed")
-	ErrTokenInvalid  = errors.New("invalid token")
-	ErrFriendLimit   = errors.New("friend limit reached")
-	ErrAlreadyFriend = errors.New("already friend or pending")
-	ErrNotFriend     = errors.New("not friend")
-	ErrGroupNotFound = errors.New("group not found")
-	ErrGroupNotEmpty = errors.New("group is not empty")
+	ErrUserExists           = errors.New("user already exists")
+	ErrUserNotFound         = errors.New("user not found")
+	ErrAuthFailed           = errors.New("auth failed")
+	ErrTokenInvalid         = errors.New("invalid token")
+	ErrFriendLimit          = errors.New("friend limit reached")
+	ErrAlreadyFriend        = errors.New("already friend or pending")
+	ErrNotFriend            = errors.New("not friend")
+	ErrGroupNotFound        = errors.New("group not found")
+	ErrGroupNotEmpty        = errors.New("group is not empty")
+	ErrNonFriendMsgLimit    = errors.New("not friend, only 1 message allowed")
 )
 
 type ChatService struct {
@@ -109,10 +113,6 @@ func (s *ChatService) GetOfflineMessages(qq int64) ([]*model.Message, error) {
 
 func (s *ChatService) MarkDelivered(messageID int64) error {
 	return s.db.Model(&model.Message{}).Where("id = ?", messageID).Update("delivered", true).Error
-}
-
-func (s *ChatService) GetGroupMembers(groupID string) ([]string, error) {
-	return nil, errors.New("not implemented")
 }
 
 func (s *ChatService) GetHistory(ctx context.Context, qq int64, limit int) ([]*model.Message, error) {
@@ -211,6 +211,8 @@ func (s *ChatService) AcceptFriend(qq int64, fromQQ int64) error {
 		Status:   model.FriendStatusAccepted,
 	}
 	s.db.Create(reverse)
+
+	s.ClearMessageCounts(qq, fromUser.QQNumber)
 
 	return nil
 }
@@ -416,6 +418,296 @@ func (s *ChatService) DeleteFriendGroup(qq int64, name string) error {
 		return ErrGroupNotFound
 	}
 	return nil
+}
+
+func (s *ChatService) IsFriend(qq1 int64, qq2 int64) bool {
+	var count int64
+	s.db.Model(&model.Friend{}).
+		Where("qq = ? AND friend_qq = ? AND status = ?", qq1, qq2, model.FriendStatusAccepted).
+		Count(&count)
+	return count > 0
+}
+
+func (s *ChatService) CheckAndIncrementNonFriendMessage(fromQQ int64, toQQ int64) error {
+	if s.IsFriend(fromQQ, toQQ) {
+		return nil
+	}
+
+	var mc model.MessageCount
+	err := s.db.Where("from_qq = ? AND to_qq = ?", fromQQ, toQQ).First(&mc).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			s.db.Create(&model.MessageCount{FromQQ: fromQQ, ToQQ: toQQ, Count: 1})
+			return nil
+		}
+		return err
+	}
+
+	if mc.Count >= model.MaxNonFriendMessages {
+		return ErrNonFriendMsgLimit
+	}
+
+	s.db.Model(&mc).Update("count", mc.Count+1)
+	return nil
+}
+
+func (s *ChatService) ClearMessageCounts(qq1 int64, qq2 int64) {
+	s.db.Where("from_qq = ? AND to_qq = ?", qq1, qq2).Delete(&model.MessageCount{})
+	s.db.Where("from_qq = ? AND to_qq = ?", qq2, qq1).Delete(&model.MessageCount{})
+}
+
+func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int) ([]*model.Message, bool, error) {
+	var msgs []*model.Message
+	query := s.db.Where(
+		"((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ''",
+		myQQ, targetQQ, targetQQ, myQQ,
+	).Where("msg_type IN ?", []int{1, 2, 3})
+
+	var total int64
+	query.Model(&model.Message{}).Count(&total)
+
+	err := query.
+		Order("id asc").
+		Offset(offset).
+		Limit(limit).
+		Find(&msgs).Error
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := int64(offset+limit) < total
+	return msgs, hasMore, nil
+}
+
+func (s *ChatService) CreateGroup(name string, ownerQQ int64) (string, error) {
+	groupID := fmt.Sprintf("G%d", time.Now().UnixNano())
+
+	group := &model.Group{
+		GroupID:   groupID,
+		Name:      name,
+		OwnerQQ:   ownerQQ,
+		MemberCnt: 1,
+	}
+	if err := s.db.Create(group).Error; err != nil {
+		return "", err
+	}
+
+	member := &model.GroupMember{
+		GroupID: groupID,
+		QQ:      ownerQQ,
+		Role:    1,
+	}
+	s.db.Create(member)
+
+	return groupID, nil
+}
+
+func (s *ChatService) JoinGroup(groupID string, qq int64) error {
+	var group model.Group
+	if err := s.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+		return ErrGroupNotFound
+	}
+
+	var existing model.GroupMember
+	err := s.db.Where("group_id = ? AND qq = ?", groupID, qq).First(&existing).Error
+	if err == nil {
+		return errors.New("already in group")
+	}
+
+	if group.MemberCnt >= group.MaxMembers {
+		return errors.New("group is full")
+	}
+
+	member := &model.GroupMember{
+		GroupID: groupID,
+		QQ:      qq,
+	}
+	if err := s.db.Create(member).Error; err != nil {
+		return err
+	}
+
+	s.db.Model(&model.Group{}).Where("group_id = ?", groupID).Update("member_cnt", group.MemberCnt+1)
+	return nil
+}
+
+func (s *ChatService) LeaveGroup(groupID string, qq int64) error {
+	var group model.Group
+	if err := s.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+		return ErrGroupNotFound
+	}
+
+	if group.OwnerQQ == qq {
+		return errors.New("owner cannot leave group, transfer ownership first")
+	}
+
+	result := s.db.Where("group_id = ? AND qq = ?", groupID, qq).Delete(&model.GroupMember{})
+	if result.RowsAffected == 0 {
+		return errors.New("not in group")
+	}
+
+	s.db.Model(&model.Group{}).Where("group_id = ?", groupID).Update("member_cnt", gorm.Expr("GREATEST(member_cnt - 1, 0)"))
+	return nil
+}
+
+func (s *ChatService) GetGroupMembers(groupID string) ([]int64, error) {
+	var members []model.GroupMember
+	if err := s.db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
+		return nil, err
+	}
+
+	qqs := make([]int64, 0, len(members))
+	for _, m := range members {
+		qqs = append(qqs, m.QQ)
+	}
+	return qqs, nil
+}
+
+func (s *ChatService) GetGroupList(qq int64) ([]model.GroupInfo, error) {
+	var memberGroups []model.GroupMember
+	s.db.Where("qq = ?", qq).Find(&memberGroups)
+
+	groupIDs := make([]string, 0, len(memberGroups))
+	for _, m := range memberGroups {
+		groupIDs = append(groupIDs, m.GroupID)
+	}
+
+	if len(groupIDs) == 0 {
+		return []model.GroupInfo{}, nil
+	}
+
+	var groups []model.Group
+	s.db.Where("group_id IN ?", groupIDs).Find(&groups)
+
+	results := make([]model.GroupInfo, 0, len(groups))
+	for _, g := range groups {
+		results = append(results, model.GroupInfo{
+			GroupID:   g.GroupID,
+			Name:      g.Name,
+			OwnerQQ:   g.OwnerQQ,
+			MemberCnt: g.MemberCnt,
+		})
+	}
+	return results, nil
+}
+
+func (s *ChatService) GetGroupInfo(groupID string) (*model.GroupInfo, error) {
+	var group model.Group
+	if err := s.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+		return nil, ErrGroupNotFound
+	}
+
+	return &model.GroupInfo{
+		GroupID:   group.GroupID,
+		Name:      group.Name,
+		OwnerQQ:   group.OwnerQQ,
+		MemberCnt: group.MemberCnt,
+	}, nil
+}
+
+func (s *ChatService) IsGroupMember(groupID string, qq int64) bool {
+	var count int64
+	s.db.Model(&model.GroupMember{}).Where("group_id = ? AND qq = ?", groupID, qq).Count(&count)
+	return count > 0
+}
+
+func (s *ChatService) GetSessions(qq int64, onlineFunc func(int64) bool) ([]model.SessionInfo, error) {
+	var sessions []model.SessionInfo
+	seen := make(map[string]bool)
+
+	type contactResult struct {
+		QQ      int64
+		Content string
+		Time    time.Time
+	}
+
+	var sentContacts []contactResult
+	s.db.Raw(`
+		SELECT to_qq as qq, content, created_at as time
+		FROM messages m1
+		WHERE from_qq = ? AND group_id = ''
+		AND created_at = (
+			SELECT MAX(created_at) FROM messages m2
+			WHERE m2.from_qq = ? AND m2.to_qq = m1.to_qq AND m2.group_id = ''
+		)
+	`, qq, qq).Scan(&sentContacts)
+
+	var receivedContacts []contactResult
+	s.db.Raw(`
+		SELECT from_qq as qq, content, created_at as time
+		FROM messages m1
+		WHERE to_qq = ? AND group_id = ''
+		AND created_at = (
+			SELECT MAX(created_at) FROM messages m2
+			WHERE m2.to_qq = ? AND m2.from_qq = m1.from_qq AND m2.group_id = ''
+		)
+	`, qq, qq).Scan(&receivedContacts)
+
+	contactMap := make(map[int64]contactResult)
+	for _, c := range sentContacts {
+		contactMap[c.QQ] = c
+	}
+	for _, c := range receivedContacts {
+		if existing, ok := contactMap[c.QQ]; !ok || c.Time.After(existing.Time) {
+			contactMap[c.QQ] = c
+		}
+	}
+
+	for contactQQ, c := range contactMap {
+		if contactQQ == qq {
+			continue
+		}
+		key := fmt.Sprintf("p_%d", contactQQ)
+		seen[key] = true
+
+		user, err := s.GetUserByQQ(contactQQ)
+		nickname := fmt.Sprintf("%d", contactQQ)
+		if err == nil && user != nil {
+			nickname = user.Nickname
+		}
+
+		sessions = append(sessions, model.SessionInfo{
+			Type:        "private",
+			TargetQQ:    contactQQ,
+			Nickname:    nickname,
+			LastMessage: c.Content,
+			LastTime:    c.Time,
+			Online:      onlineFunc(contactQQ),
+		})
+	}
+
+	var memberGroups []model.GroupMember
+	s.db.Where("qq = ?", qq).Find(&memberGroups)
+
+	for _, mg := range memberGroups {
+		key := fmt.Sprintf("g_%s", mg.GroupID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		var group model.Group
+		if err := s.db.Where("group_id = ?", mg.GroupID).First(&group).Error; err != nil {
+			continue
+		}
+
+		var lastMsg model.Message
+		s.db.Where("group_id = ?", mg.GroupID).Order("created_at desc").First(&lastMsg)
+
+		session := model.SessionInfo{
+			Type:        "group",
+			GroupID:     mg.GroupID,
+			Nickname:    group.Name,
+			LastMessage: lastMsg.Content,
+			LastTime:    lastMsg.CreatedAt,
+		}
+		sessions = append(sessions, session)
+	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].LastTime.After(sessions[j].LastTime)
+	})
+
+	return sessions, nil
 }
 
 func generateToken() string {
