@@ -2,6 +2,26 @@
 
 ---
 
+## [v0.5] — 2026-05-25 / branch: `feature/v0.5`
+
+### Added
+- **非好友消息限制：** 非好友只能发 1 条消息，好友无限制；`message_counts` 表记录计数；接受好友时清除计数
+- **会话历史记录：** `/to` 后自动拉取最近 30 条历史消息；`/prev` `/next` 翻页；`[我]` / `[对方昵称]` 方向标识
+- **群组聊天：** `/mkgroup` 创建群、`/joingroup` 加群、`/leavegroup` 退群、`/mygroups` 群列表、`/togroup` 切换群聊；群消息广播；群成员校验
+- **会话列表：** `/sessions` 列出所有私聊和群聊会话，显示最后一条消息和时间
+- **新消息类型：** `MsgTypeHistory(312)`, `MsgTypeSessionList(313)`, `MsgTypeGroupList(203)`, `MsgTypeGroupInfo(204)`
+- **新数据模型：** `MessageCount` 表（非好友消息计数）、`HistoryMessage`/`HistoryResponse`/`SessionInfo` DTO
+- **单元测试：** 5 个测试覆盖非好友限制、历史记录、群组功能
+
+### Changed
+- **Group/GroupMember 模型：** `OwnerUID(string)` → `OwnerQQ(int64)`，`UID(string)` → `QQ(int64)`
+- **GetGroupMembers：** 从 `[]string` 改为 `[]int64`，真实数据库查询
+- **handleChatMessage：** 增加非好友消息限制检查和群成员校验
+- **broadcastToGroup：** 从内存 `h.groups` 改为查询数据库
+- **客户端 prompt：** 支持显示群聊目标 `Group:xxx`
+
+---
+
 ## [v0.4] — 2026-05-22 / branch: `feature/v0.4-qq-identity`
 
 ### Changed

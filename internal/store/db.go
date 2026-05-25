@@ -19,6 +19,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 		&model.User{},
 		&model.Friend{},
 		&model.FriendGroup{},
+		&model.MessageCount{},
 		&model.Group{},
 		&model.GroupMember{},
 		&model.Message{},

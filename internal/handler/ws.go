@@ -32,7 +32,6 @@ type Hub struct {
 type Service interface {
 	HandleMessage(ctx context.Context, msg *model.Message) error
 	ValidateToken(qq int64, token string) (bool, error)
-	GetGroupMembers(groupID string) ([]string, error)
 	GetOfflineMessages(qq int64) ([]*model.Message, error)
 	MarkDelivered(messageID int64) error
 	Register(nickname, password string) (int64, error)
@@ -51,6 +50,17 @@ type Service interface {
 	CreateFriendGroup(qq int64, name string) error
 	DeleteFriendGroup(qq int64, name string) error
 	GetUserByQQ(qq int64) (*model.User, error)
+	IsFriend(qq1 int64, qq2 int64) bool
+	CheckAndIncrementNonFriendMessage(fromQQ int64, toQQ int64) error
+	GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int) ([]*model.Message, bool, error)
+	CreateGroup(name string, ownerQQ int64) (string, error)
+	JoinGroup(groupID string, qq int64) error
+	LeaveGroup(groupID string, qq int64) error
+	GetGroupMembers(groupID string) ([]int64, error)
+	GetGroupList(qq int64) ([]model.GroupInfo, error)
+	GetGroupInfo(groupID string) (*model.GroupInfo, error)
+	IsGroupMember(groupID string, qq int64) bool
+	GetSessions(qq int64, onlineFunc func(int64) bool) ([]model.SessionInfo, error)
 }
 
 func NewHub(svc Service, onStatus func(int64, bool)) *Hub {
@@ -130,6 +140,20 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleFriendDeleteGroup(c, &msg)
 	case model.MsgTypeCheckUser:
 		h.handleCheckUser(c, &msg)
+	case model.MsgTypeHistory:
+		h.handleHistory(c, &msg)
+	case model.MsgTypeSessionList:
+		h.handleSessionList(c, &msg)
+	case model.MsgTypeGroupCreate:
+		h.handleGroupCreate(c, &msg)
+	case model.MsgTypeGroupJoin:
+		h.handleGroupJoin(c, &msg)
+	case model.MsgTypeGroupLeave:
+		h.handleGroupLeave(c, &msg)
+	case model.MsgTypeGroupList:
+		h.handleGroupList(c, &msg)
+	case model.MsgTypeGroupInfo:
+		h.handleGroupInfo(c, &msg)
 	case model.MsgTypeText, model.MsgTypeImage, model.MsgTypeFile:
 		h.handleChatMessage(c, &msg)
 	default:
@@ -291,6 +315,28 @@ func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
 				ID:        -1,
 				ClientSeq: msg.ClientSeq,
 				Content:   "user not found",
+			})
+			return
+		}
+
+		if err := h.svc.CheckAndIncrementNonFriendMessage(c.QQ, msg.ToQQ); err != nil {
+			log.Printf("[chat] non-friend msg limit: from=%d to=%d err=%v", c.QQ, msg.ToQQ, err)
+			c.WriteJSON(&model.Message{
+				MsgType:   model.MsgTypeServerAck,
+				ID:        -1,
+				ClientSeq: msg.ClientSeq,
+				Content:   err.Error(),
+			})
+			return
+		}
+	} else {
+		if !h.svc.IsGroupMember(msg.GroupID, c.QQ) {
+			log.Printf("[chat] qq=%d not member of group %s", c.QQ, msg.GroupID)
+			c.WriteJSON(&model.Message{
+				MsgType:   model.MsgTypeServerAck,
+				ID:        -1,
+				ClientSeq: msg.ClientSeq,
+				Content:   "not group member",
 			})
 			return
 		}
@@ -587,6 +633,213 @@ func (h *Hub) handleCheckUser(c *ws.Conn, msg *model.Message) {
 	c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
 }
 
+func (h *Hub) handleHistory(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	var req model.HistoryRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeFriendError(c, "invalid payload")
+		return
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 30
+	}
+
+	targetUser, err := h.svc.GetUserByQQ(req.TargetQQ)
+	if err != nil {
+		h.writeFriendError(c, "user not found")
+		return
+	}
+
+	msgs, hasMore, err := h.svc.GetHistoryWithTarget(c.QQ, req.TargetQQ, req.Offset, req.Limit)
+	if err != nil {
+		log.Printf("[history] query error: %v", err)
+		h.writeFriendError(c, "query failed")
+		return
+	}
+
+	historyMsgs := make([]model.HistoryMessage, 0, len(msgs))
+	for _, m := range msgs {
+		historyMsgs = append(historyMsgs, model.HistoryMessage{
+			ID:        m.ID,
+			FromQQ:    m.FromQQ,
+			ToQQ:      m.ToQQ,
+			Content:   m.Content,
+			CreatedAt: m.CreatedAt,
+		})
+	}
+
+	resp := model.HistoryResponse{
+		TargetQQ: req.TargetQQ,
+		Nickname: targetUser.Nickname,
+		Messages: historyMsgs,
+		Offset:   req.Offset,
+		HasMore:  hasMore,
+	}
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeHistory,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleSessionList(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	sessions, err := h.svc.GetSessions(c.QQ, h.isOnline)
+	if err != nil {
+		log.Printf("[sessions] query error: %v", err)
+		h.writeFriendError(c, "query failed")
+		return
+	}
+
+	resp := model.SessionListResponse{Sessions: sessions}
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeSessionList,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleGroupCreate(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	var req model.GroupCreateRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeFriendError(c, "invalid payload")
+		return
+	}
+
+	if req.Name == "" {
+		h.writeFriendError(c, "group name required")
+		return
+	}
+
+	groupID, err := h.svc.CreateGroup(req.Name, c.QQ)
+	if err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	h.JoinGroup(c.QQ, groupID)
+	log.Printf("[group] created group %s by qq=%d", groupID, c.QQ)
+
+	resp := map[string]interface{}{
+		"group_id": groupID,
+		"name":     req.Name,
+		"message":  "group created",
+	}
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeGroupCreate,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleGroupJoin(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	groupID := msg.Content
+	if groupID == "" {
+		h.writeFriendError(c, "group_id required")
+		return
+	}
+
+	if err := h.svc.JoinGroup(groupID, c.QQ); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	h.JoinGroup(c.QQ, groupID)
+	log.Printf("[group] qq=%d joined group %s", c.QQ, groupID)
+	h.writeFriendResult(c, "joined group "+groupID)
+}
+
+func (h *Hub) handleGroupLeave(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	groupID := msg.Content
+	if groupID == "" {
+		h.writeFriendError(c, "group_id required")
+		return
+	}
+
+	if err := h.svc.LeaveGroup(groupID, c.QQ); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	h.LeaveGroup(c.QQ, groupID)
+	log.Printf("[group] qq=%d left group %s", c.QQ, groupID)
+	h.writeFriendResult(c, "left group "+groupID)
+}
+
+func (h *Hub) handleGroupList(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	groups, err := h.svc.GetGroupList(c.QQ)
+	if err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	resp := model.GroupListResponse{Groups: groups}
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeGroupList,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleGroupInfo(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	groupID := msg.Content
+	if groupID == "" {
+		h.writeFriendError(c, "group_id required")
+		return
+	}
+
+	info, err := h.svc.GetGroupInfo(groupID)
+	if err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	if !h.svc.IsGroupMember(groupID, c.QQ) {
+		h.writeFriendError(c, "not group member")
+		return
+	}
+
+	payload, _ := json.Marshal(info)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeGroupInfo,
+		Content: string(payload),
+	})
+}
+
 func (h *Hub) notifyFriendRequest(fromQQ int64, toQQ int64, message string) {
 	toUser, _ := h.svc.GetUserByQQ(toQQ)
 	if toUser == nil {
@@ -720,19 +973,12 @@ func (h *Hub) sendToUser(qq int64, msg *model.Message) {
 }
 
 func (h *Hub) broadcastToGroup(msg *model.Message) {
-	h.mu.RLock()
-	members, ok := h.groups[msg.GroupID]
-	h.mu.RUnlock()
-
-	if !ok {
+	members, err := h.svc.GetGroupMembers(msg.GroupID)
+	if err != nil {
 		return
 	}
 
-	for uid := range members {
-		qq, err := strconv.ParseInt(uid, 10, 64)
-		if err != nil {
-			continue
-		}
+	for _, qq := range members {
 		if qq != msg.FromQQ {
 			h.sendToUser(qq, msg)
 		}

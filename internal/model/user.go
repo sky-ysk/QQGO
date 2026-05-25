@@ -36,7 +36,7 @@ type Group struct {
 	ID         uint      `gorm:"primaryKey" json:"-"`
 	GroupID    string    `gorm:"uniqueIndex;size:64;not null" json:"group_id"`
 	Name       string    `gorm:"size:64" json:"name"`
-	OwnerUID   string    `gorm:"size:64" json:"owner_uid"`
+	OwnerQQ    int64     `gorm:"not null" json:"owner_qq"`
 	Avatar     string    `gorm:"size:256" json:"avatar"`
 	MemberCnt  int       `gorm:"default:0" json:"member_cnt"`
 	MaxMembers int       `gorm:"default:200" json:"max_members"`
@@ -47,7 +47,7 @@ type Group struct {
 type GroupMember struct {
 	ID       uint      `gorm:"primaryKey" json:"-"`
 	GroupID  string    `gorm:"index;size:64;not null" json:"group_id"`
-	UID      string    `gorm:"index;size:64;not null" json:"uid"`
+	QQ       int64     `gorm:"index;not null" json:"qq"`
 	Role     int       `gorm:"default:0" json:"role"`
 	JoinedAt time.Time `gorm:"autoCreateTime" json:"joined_at"`
 }
@@ -58,3 +58,13 @@ type FriendGroup struct {
 	GroupName string    `gorm:"uniqueIndex:idx_qq_group;size:64;not null" json:"group_name"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+type MessageCount struct {
+	ID       uint      `gorm:"primaryKey" json:"-"`
+	FromQQ   int64     `gorm:"uniqueIndex:idx_from_to;not null" json:"from_qq"`
+	ToQQ     int64     `gorm:"uniqueIndex:idx_from_to;not null" json:"to_qq"`
+	Count    int       `gorm:"default:0" json:"count"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+const MaxNonFriendMessages = 1
