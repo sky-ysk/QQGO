@@ -2,6 +2,29 @@
 
 ---
 
+## [v0.6] — 2026-05-25 / branch: `feature/v0.6`
+
+### Added
+- **本地聊天日志：** 客户端 `DATA/` 目录按 QQ 号分目录保存私聊和群聊日志
+- **Token 持久化：** 登录成功自动保存 token，客户端启动自动 Token 登录，`/logout` 清除
+- **群聊历史记录：** `/togroup` 后自动拉取 30 条群消息，`/prev` `/next` 翻页
+- **新消息类型：** `MsgTypeGroupHistory(314)`
+- **新文件：** `cmd/client/localstore.go`（日志 + Token 管理）
+- **单元测试：** 20 个测试覆盖本地存储、Token、群聊历史
+
+### Fixed
+- **BUG-009：** 接收方消息打印到 prompt 中间（`\033[2K` 清除整行）
+- **BUG-010：** `/leavegroup` 后无法退出群聊窗口（清除 targetGroupID）
+- **群成员校验：** 服务端返回 "not group member" 时自动退出群聊窗口
+
+### Changed
+- **客户端启动：** 自动扫描 DATA/ 目录尝试 Token 登录
+- **/to 命令：** 切换私聊时自动清除 targetGroupID 和群历史上下文
+- **/leavegroup：** 退出当前群时清除所有群相关状态
+- **消息收发：** 发送和接收消息时自动追加本地日志
+
+---
+
 ## [v0.5] — 2026-05-25 / branch: `feature/v0.5`
 
 ### Added

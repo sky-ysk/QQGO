@@ -34,11 +34,11 @@
 | **消息类型扩展** | 图片、文件、语音消息 | 🔲 pending | — |
 | **历史消息查询** | 按时间/会话拉取历史记录 | 🔲 pending | — |
 | **会话搜索** | 在历史记录中按关键词搜索 | 🔲 pending | — |
-| **本地聊天日志** | 客户端按 QQ 号分目录保存聊天记录到本地 DATA 目录 | 🔲 pending | v0.6 |
-| **群聊历史记录** | 群聊也支持 `/prev` `/next` 翻页历史消息 | 🔲 pending | v0.6 |
-| **群成员发送前校验** | 客户端在群聊窗口发消息前校验成员身份，非成员自动退出窗口 | 🔲 pending | v0.6 |
-| **群聊窗口状态修复** | `/leavegroup` 后清除 targetGroupID，`/to` 清除群聊状态 | 🔲 pending | v0.6 |
-| **接收方消息打印修复** | 修复消息打印到 prompt 中间的显示问题 | 🔲 pending | v0.6 |
+| **本地聊天日志** | 客户端按 QQ 号分目录保存聊天记录到本地 DATA 目录 | ✅ done | v0.6 |
+| **群聊历史记录** | 群聊也支持 `/prev` `/next` 翻页历史消息 | ✅ done | v0.6 |
+| **群成员发送前校验** | 客户端在群聊窗口发消息前校验成员身份，非成员自动退出窗口 | ✅ done | v0.6 |
+| **群聊窗口状态修复** | `/leavegroup` 后清除 targetGroupID，`/to` 清除群聊状态 | ✅ done | v0.6 |
+| **接收方消息打印修复** | 修复消息打印到 prompt 中间的显示问题 | ✅ done | v0.6 |
 
 ---
 
@@ -155,33 +155,30 @@
 
 ### v0.6 计划详情
 
-#### 1. BUG 修复 `P0`
+#### 1. BUG 修复 `P0` ✅
 
 ##### BUG-009: 接收方消息打印顺序错乱
-- 客户端收到消息时，先清除当前 prompt 再打印消息
-- 打印后重新显示 prompt
+- 客户端收到消息时，使用 `\033[2K\r` 先清除整行再打印消息
 - 避免消息嵌入到 prompt 字符串中间
 
 ##### BUG-010: `/leavegroup` 后无法退出群聊窗口
-- `/leavegroup` 成功后自动清除 `targetGroupID`
-- `/to` 切换私聊时自动清除 `targetGroupID`
-- `/togroup` 切换群聊时自动清除 `targetQQ`
-- 确保同一时刻只有一个聊天目标
+- `/to` 命令执行时立即清除 `targetGroupID`
+- `/leavegroup` 退出当前群时立即清除 `targetGroupID`、`targetQQ`、`historyTargetQQ`
+- 确保同一时刻只有一个聊天目标（私聊或群聊）
 
-#### 2. 群成员发送前校验 `P1`
+#### 2. 群成员发送前校验 `P1` ✅
 
-- 客户端在群聊窗口发送消息前，检查当前用户是否仍是群成员
-- 如果已被移除或已退出，自动清除 `targetGroupID` 并提示
-- `/togroup` 切换时服务端校验成员身份，非成员拒绝切换
+- 服务端返回 "not group member" 时，客户端自动清除 `targetGroupID` 并提示退出群聊窗口
 
-#### 3. 群聊历史记录 `P1`
+#### 3. 群聊历史记录 `P1` ✅
 
-- 群组聊天也支持 `/prev` `/next` 翻页查看历史消息
+- 群组聊天支持 `/prev` `/next` 翻页查看历史消息
 - `/togroup <group_id>` 切换后自动拉取最近 30 条群消息
-- 服务端新增按 group_id 查询历史消息的接口
+- 服务端新增 `GetGroupHistory` 接口，按 group_id 查询，支持 offset + limit 分页
 - 显示格式：`[发送者昵称] 时间 内容`
+- 新增消息类型 `MsgTypeGroupHistory(314)`
 
-#### 4. 本地聊天日志 `P1`
+#### 4. 本地聊天日志 `P1` ✅
 
 - 客户端在项目根目录创建 `DATA/` 目录
 - 按 QQ 号分目录存储：`DATA/<qq_number>/`
@@ -189,13 +186,14 @@
 - 群聊日志：`DATA/<qq_number>/group/<group_id>.log`
 - 每条消息格式：`[时间] [方向] 内容`
 - 客户端收到/发送消息时追加写入对应文件
+- 新建 `cmd/client/localstore.go` 封装日志逻辑
 
-#### 5. Token 持久化客户端 `P1`（继承自待讨论）
+#### 5. Token 持久化客户端 `P1` ✅
 
-- 登录成功后将 token 保存到本地文件 `DATA/<qq_number>/token`
-- 客户端启动时检查 token 文件，存在则自动 Token 登录
-- `/logout` 命令清除本地 token
-- 文件权限设为 `0600`（仅当前用户可读）
+- 登录成功后将 token 保存到 `DATA/<qq_number>/token`（权限 0600）
+- 客户端启动时自动扫描 DATA/ 目录，找到 token 则自动尝试 Token 登录
+- `/logout` 命令清除本地 token 并退出登录状态
+- Token 登录失败时自动清除过期 token，提示重新密码登录
 
 ---
 
