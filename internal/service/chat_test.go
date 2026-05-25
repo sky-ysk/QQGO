@@ -286,3 +286,113 @@ func TestGroupChat(t *testing.T) {
 		t.Fatal("owner should not be able to leave")
 	}
 }
+
+func TestGetGroupHistory(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	groupID, _ := svc.CreateGroup("history test", qq1)
+	svc.JoinGroup(groupID, qq2)
+
+	for i := 1; i <= 5; i++ {
+		svc.HandleMessage(nil, &model.Message{
+			MsgType: model.MsgTypeText,
+			FromQQ:  qq1,
+			ToQQ:    0,
+			GroupID: groupID,
+			Content: "group msg " + string(rune('0'+i)),
+		})
+		svc.HandleMessage(nil, &model.Message{
+			MsgType: model.MsgTypeText,
+			FromQQ:  qq2,
+			ToQQ:    0,
+			GroupID: groupID,
+			Content: "reply " + string(rune('0'+i)),
+		})
+	}
+
+	msgs, hasMore, err := svc.GetGroupHistory(groupID, 0, 30)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 10 {
+		t.Fatalf("expected 10 messages, got %d", len(msgs))
+	}
+	if hasMore {
+		t.Fatal("should not have more")
+	}
+
+	msgs, hasMore, err = svc.GetGroupHistory(groupID, 0, 5)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("expected 5 messages, got %d", len(msgs))
+	}
+	if !hasMore {
+		t.Fatal("should have more")
+	}
+
+	msgs, hasMore, err = svc.GetGroupHistory(groupID, 5, 5)
+	if err != nil {
+		t.Fatalf("query page 2 failed: %v", err)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("expected 5 messages on page 2, got %d", len(msgs))
+	}
+	if hasMore {
+		t.Fatal("should not have more on page 2")
+	}
+
+	msgs, _, err = svc.GetGroupHistory("nonexistent", 0, 30)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected 0 messages for nonexistent group, got %d", len(msgs))
+	}
+
+	msgs, _, err = svc.GetGroupHistory(groupID, 100, 30)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected 0 messages for out of range offset, got %d", len(msgs))
+	}
+}
+
+func TestGroupHistoryOnlyReturnsChatMessages(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	groupID, _ := svc.CreateGroup("filter test", qq1)
+
+	svc.HandleMessage(nil, &model.Message{
+		MsgType: model.MsgTypeText,
+		FromQQ:  qq1,
+		GroupID: groupID,
+		Content: "text message",
+	})
+	svc.HandleMessage(nil, &model.Message{
+		MsgType: model.MsgTypeFriendRequest,
+		FromQQ:  qq1,
+		GroupID: groupID,
+		Content: "should be filtered",
+	})
+
+	msgs, _, err := svc.GetGroupHistory(groupID, 0, 30)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (friend request filtered), got %d", len(msgs))
+	}
+	if msgs[0].Content != "text message" {
+		t.Fatalf("expected text message, got %s", msgs[0].Content)
+	}
+}

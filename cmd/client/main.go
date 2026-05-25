@@ -27,6 +27,8 @@ var (
 	historyOffset         int
 	historyTargetQQ       int64
 	historyTargetNickname string
+	historyGroupID        string
+	historyGroupName      string
 )
 
 func handleCommand(conn *websocket.Conn, text string) bool {
@@ -46,6 +48,9 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			fmt.Println("[cmd] invalid QQ number")
 			return true
 		}
+		targetGroupID = ""
+		historyGroupID = ""
+		historyGroupName = ""
 		checkUser(conn, qq)
 
 	case "/register":
@@ -149,24 +154,34 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		deleteGroup(conn, strings.Join(parts[1:], " "))
 
 	case "/prev":
-		if historyTargetQQ == 0 {
-			fmt.Println("[cmd] no chat history context, use /to <qq_number> first")
-			return true
+		if historyGroupID != "" {
+			historyOffset += 30
+			requestGroupHistory(conn, historyGroupID, historyOffset)
+		} else if historyTargetQQ != 0 {
+			historyOffset += 30
+			requestHistory(conn, historyTargetQQ, historyOffset)
+		} else {
+			fmt.Println("[cmd] no chat history context, use /to <qq_number> or /togroup <group_id> first")
 		}
-		historyOffset += 30
-		requestHistory(conn, historyTargetQQ, historyOffset)
 
 	case "/next":
-		if historyTargetQQ == 0 {
-			fmt.Println("[cmd] no chat history context, use /to <qq_number> first")
-			return true
-		}
-		if historyOffset >= 30 {
-			historyOffset -= 30
+		if historyGroupID != "" {
+			if historyOffset >= 30 {
+				historyOffset -= 30
+			} else {
+				historyOffset = 0
+			}
+			requestGroupHistory(conn, historyGroupID, historyOffset)
+		} else if historyTargetQQ != 0 {
+			if historyOffset >= 30 {
+				historyOffset -= 30
+			} else {
+				historyOffset = 0
+			}
+			requestHistory(conn, historyTargetQQ, historyOffset)
 		} else {
-			historyOffset = 0
+			fmt.Println("[cmd] no chat history context, use /to <qq_number> or /togroup <group_id> first")
 		}
-		requestHistory(conn, historyTargetQQ, historyOffset)
 
 	case "/mkgroup":
 		if len(parts) < 2 {
@@ -187,7 +202,17 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			fmt.Println("[cmd] Usage: /leavegroup <group_id>")
 			return true
 		}
-		leaveChatGroup(conn, parts[1])
+		leaveGroupID := parts[1]
+		leaveChatGroup(conn, leaveGroupID)
+		if leaveGroupID == targetGroupID {
+			targetGroupID = ""
+			targetQQ = 0
+			historyTargetQQ = 0
+			historyGroupID = ""
+			historyGroupName = ""
+			historyOffset = 0
+			fmt.Println("[cmd] left group chat, use /to or /togroup to switch target")
+		}
 
 	case "/mygroups":
 		listMyGroups(conn)
@@ -242,6 +267,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		fmt.Println("  /mygroups                             - list my chat groups")
 		fmt.Println("  /togroup <group_id>                   - switch to group chat")
 		fmt.Println("  /sessions                             - list all chat sessions")
+		fmt.Println("  /logout                               - logout and clear saved token")
 		fmt.Println("  /help                                 - show this help")
 		fmt.Println("  /quit                                 - exit")
 
@@ -250,6 +276,20 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		time.Sleep(100 * time.Millisecond)
 		conn.Close()
 		os.Exit(0)
+
+	case "/logout":
+		if myQQNumber == 0 {
+			fmt.Println("[cmd] not logged in")
+			return true
+		}
+		removeToken(myQQNumber)
+		fmt.Printf("[cmd] logged out QQ:%d, token cleared\n", myQQNumber)
+		myQQNumber = 0
+		myNickname = ""
+		currentQQ = 0
+		targetQQ = 0
+		targetGroupID = ""
+		historyTargetQQ = 0
 
 	default:
 		fmt.Printf("[cmd] unknown command: %s, type /help for help\n", parts[0])
@@ -389,6 +429,19 @@ func requestHistory(conn *websocket.Conn, targetQQ int64, offset int) {
 	conn.WriteMessage(websocket.TextMessage, msg)
 }
 
+func requestGroupHistory(conn *websocket.Conn, groupID string, offset int) {
+	payload, _ := json.Marshal(&model.GroupHistoryRequest{
+		GroupID: groupID,
+		Offset:  offset,
+		Limit:   30,
+	})
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeGroupHistory,
+		Content: string(payload),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
 func createChatGroup(conn *websocket.Conn, name string) {
 	payload, _ := json.Marshal(&model.GroupCreateRequest{Name: name})
 	msg, _ := json.Marshal(&model.Message{
@@ -482,6 +535,8 @@ func prompt() {
 }
 
 func main() {
+	initDataDir()
+
 	addr := "ws://localhost:8080/ws"
 	fmt.Printf("Connecting to %s...\n", addr)
 
@@ -493,6 +548,23 @@ func main() {
 
 	fmt.Println("Welcome to QQGO! Use /login or /register to get started.")
 	prompt()
+
+	if savedQQ, ok := findSavedQQ(); ok {
+		if token, tokOk := loadToken(savedQQ); tokOk {
+			fmt.Printf("[cmd] found saved token for QQ:%d, auto-login...\n", savedQQ)
+			pendingLoginQQ = savedQQ
+			payload, _ := json.Marshal(&model.LoginRequest{
+				QQ:       savedQQ,
+				Token:    token,
+				Platform: "cli",
+			})
+			autoMsg, _ := json.Marshal(&model.Message{
+				MsgType: model.MsgTypeLogin,
+				Content: string(payload),
+			})
+			conn.WriteMessage(websocket.TextMessage, autoMsg)
+		}
+	}
 
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
@@ -528,10 +600,18 @@ func main() {
 						}
 						myQQNumber = resp.QQNumber
 						myNickname = resp.Nickname
-						fmt.Printf("\r[Server]: login ok, %s(QQ:%d), online=%d\n> ", myNickname, myQQNumber, resp.Online)
+						if resp.Token != "" {
+							saveToken(myQQNumber, resp.Token)
+						}
+						fmt.Printf("\033[2K\r[Server]: login ok, %s(QQ:%d), online=%d\n> ", myNickname, myQQNumber, resp.Online)
 					} else {
+						if pendingLoginQQ != 0 && resp.Message == "auth failed" {
+							removeToken(pendingLoginQQ)
+							fmt.Printf("\033[2K\r[Server]: token expired for QQ:%d, please login with password\n> ", pendingLoginQQ)
+						} else {
+							fmt.Printf("\033[2K\r[Server]: login failed - %s\n> ", resp.Message)
+						}
 						pendingLoginQQ = 0
-						fmt.Printf("\r[Server]: login failed - %s\n> ", resp.Message)
 					}
 				}
 
@@ -539,9 +619,9 @@ func main() {
 				var resp model.RegisterResponse
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
 					if resp.Code == 0 {
-						fmt.Printf("\r[Server]: register ok, your QQ number is %d\n> ", resp.QQNumber)
+						fmt.Printf("\033[2K\r[Server]: register ok, your QQ number is %d\n> ", resp.QQNumber)
 					} else {
-						fmt.Printf("\r[Server]: %s\n> ", resp.Message)
+						fmt.Printf("\033[2K\r[Server]: %s\n> ", resp.Message)
 					}
 				}
 
@@ -549,16 +629,34 @@ func main() {
 				sentCount--
 				if sentCount <= 0 {
 					sentCount = 0
-					fmt.Printf("\r[sent ✓] %s\n> ", msg.Content)
+					if msg.Content == "not group member" && targetGroupID != "" {
+						fmt.Printf("\033[2K\r[sent ✗] %s, leaving group chat window\n> ", msg.Content)
+						targetGroupID = ""
+						historyGroupID = ""
+						historyGroupName = ""
+						historyOffset = 0
+					} else {
+						fmt.Printf("\033[2K\r[sent ✓] %s\n> ", msg.Content)
+					}
 					prompt()
 				}
 
 			case model.MsgTypeDelivered:
-				fmt.Printf("\r[delivered ✓✓] message #%d\n> ", msg.ClientSeq)
+				fmt.Printf("\033[2K\r[delivered ✓✓] message #%d\n> ", msg.ClientSeq)
 				prompt()
 
 			case model.MsgTypeText:
-				fmt.Printf("\r[%d -> %d]: %s\n> ", msg.FromQQ, msg.ToQQ, msg.Content)
+				fmt.Printf("\033[2K\r[%d -> %d]: %s\n> ", msg.FromQQ, msg.ToQQ, msg.Content)
+
+				senderName := fmt.Sprintf("%d", msg.FromQQ)
+				if msg.FromQQ == myQQNumber {
+					senderName = "我"
+				}
+				if msg.GroupID != "" {
+					appendGroupLog(myQQNumber, msg.GroupID, senderName, msg.Content)
+				} else {
+					appendPrivateLog(myQQNumber, msg.FromQQ, senderName, msg.Content)
+				}
 
 				ackPayload, _ := json.Marshal(&model.AckRequest{MessageID: msg.ID})
 				ackMsg := &model.Message{
@@ -570,11 +668,11 @@ func main() {
 				prompt()
 
 			case model.MsgTypeFriendRequest:
-				fmt.Printf("\r[Friend Request] %s\n> ", msg.Content)
+				fmt.Printf("\033[2K\r[Friend Request] %s\n> ", msg.Content)
 				prompt()
 
 			case model.MsgTypeFriendAccept:
-				fmt.Printf("\r[Friend Accepted] %s\n> ", msg.Content)
+				fmt.Printf("\033[2K\r[Friend Accepted] %s\n> ", msg.Content)
 				prompt()
 
 			case model.MsgTypeFriendList:
@@ -592,7 +690,7 @@ func main() {
 				prompt()
 
 			case model.MsgTypeFriendMoveGroup:
-				fmt.Printf("\r[Server]: %s\n> ", msg.Content)
+				fmt.Printf("\033[2K\r[Server]: %s\n> ", msg.Content)
 				prompt()
 
 			case model.MsgTypeFriendGroups:
@@ -617,10 +715,10 @@ func main() {
 						if !resp.Online {
 							statusIcon = "○"
 						}
-						fmt.Printf("\r[cmd] switched to %s %s(QQ:%d)\n> ", statusIcon, resp.Nickname, resp.QQNumber)
+						fmt.Printf("\033[2K\r[cmd] switched to %s %s(QQ:%d)\n> ", statusIcon, resp.Nickname, resp.QQNumber)
 						requestHistory(conn, resp.QQNumber, 0)
 					} else {
-						fmt.Printf("\r[cmd] %s\n> ", resp.Message)
+						fmt.Printf("\033[2K\r[cmd] %s\n> ", resp.Message)
 					}
 				}
 				prompt()
@@ -638,7 +736,7 @@ func main() {
 				if err := json.Unmarshal([]byte(msg.Content), &result); err == nil {
 					groupID, _ := result["group_id"].(string)
 					name, _ := result["name"].(string)
-					fmt.Printf("\r[Group] created: %s (ID: %s)\n> ", name, groupID)
+					fmt.Printf("\033[2K\r[Group] created: %s (ID: %s)\n> ", name, groupID)
 				}
 				prompt()
 
@@ -655,7 +753,11 @@ func main() {
 					targetGroupID = info.GroupID
 					targetQQ = 0
 					historyTargetQQ = 0
-					fmt.Printf("\r[cmd] switched to group: %s (ID: %s, members: %d)\n> ", info.Name, info.GroupID, info.MemberCnt)
+					historyGroupID = info.GroupID
+					historyGroupName = info.Name
+					historyOffset = 0
+					fmt.Printf("\033[2K\r[cmd] switched to group: %s (ID: %s, members: %d)\n> ", info.Name, info.GroupID, info.MemberCnt)
+					requestGroupHistory(conn, info.GroupID, 0)
 				}
 				prompt()
 
@@ -666,8 +768,16 @@ func main() {
 				}
 				prompt()
 
+			case model.MsgTypeGroupHistory:
+				var resp model.GroupHistoryResponse
+				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
+					historyGroupName = resp.GroupName
+					displayGroupHistory(resp)
+				}
+				prompt()
+
 			default:
-				fmt.Printf("\r[%d]: %s\n> ", msg.FromQQ, msg.Content)
+				fmt.Printf("\033[2K\r[%d]: %s\n> ", msg.FromQQ, msg.Content)
 				prompt()
 			}
 		}
@@ -711,6 +821,12 @@ func main() {
 			ToQQ:      targetQQ,
 			GroupID:   targetGroupID,
 			Content:   text,
+		}
+
+		if targetGroupID != "" {
+			appendGroupLog(myQQNumber, targetGroupID, "我", text)
+		} else {
+			appendPrivateLog(myQQNumber, targetQQ, "我", text)
 		}
 
 		data, _ := json.Marshal(msg)
@@ -879,4 +995,27 @@ func displaySessionList(sessions []model.SessionInfo) {
 		}
 	}
 	fmt.Println("────────────────────")
+}
+
+func displayGroupHistory(resp model.GroupHistoryResponse) {
+	if len(resp.Messages) == 0 && resp.Offset == 0 {
+		return
+	}
+
+	fmt.Printf("\n───── Group History: %s (%s) ─────\n", resp.GroupName, resp.GroupID)
+	for _, m := range resp.Messages {
+		timeStr := m.CreatedAt.Format("15:04:05")
+		senderName := fmt.Sprintf("%d", m.FromQQ)
+		if m.FromQQ == myQQNumber {
+			senderName = "我"
+		}
+		fmt.Printf("  [%s] %s  %s\n", senderName, timeStr, m.Content)
+	}
+	if resp.HasMore {
+		fmt.Println("  ... (use /prev for older messages)")
+	}
+	if resp.Offset > 0 {
+		fmt.Println("  (use /next for newer messages)")
+	}
+	fmt.Println("─────────────────────────────────────")
 }

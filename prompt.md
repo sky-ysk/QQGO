@@ -4,9 +4,9 @@
 - REQUIREMENTS.md（需求 backlog + 各版本计划详情）
 - BUGS.md（缺陷追踪）
 - CHANGELOG.md（版本发布记录）
-- docs/superpowers/tests/2026-05-22-v0.4-test-plan.md（最新测试计划）
-当前版本：v0.4（feature/v0.4-qq-identity 分支）
-下一版本：v0.5
+- docs/superpowers/tests/2026-05-25-v0.6-test-plan.md（最新测试计划）
+当前版本：v0.6（feature/v0.6 分支）
+下一版本：v0.7
 v0.5 已规划的需求（来自 REQUIREMENTS.md）：
 1. 非好友消息限制 — 好友自由发消息，非好友只能发 1 条
 2. 会话历史记录 — /to 后显示最近 30 条，支持 /prev /next 翻页

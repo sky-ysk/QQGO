@@ -479,6 +479,26 @@ func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset in
 	return msgs, hasMore, nil
 }
 
+func (s *ChatService) GetGroupHistory(groupID string, offset int, limit int) ([]*model.Message, bool, error) {
+	var msgs []*model.Message
+	query := s.db.Where("group_id = ?", groupID).Where("msg_type IN ?", []int{1, 2, 3})
+
+	var total int64
+	query.Model(&model.Message{}).Count(&total)
+
+	err := query.
+		Order("id asc").
+		Offset(offset).
+		Limit(limit).
+		Find(&msgs).Error
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := int64(offset+limit) < total
+	return msgs, hasMore, nil
+}
+
 func (s *ChatService) CreateGroup(name string, ownerQQ int64) (string, error) {
 	groupID := fmt.Sprintf("G%d", time.Now().UnixNano())
 

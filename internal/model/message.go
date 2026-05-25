@@ -34,6 +34,7 @@ const (
 	MsgTypeCheckUser         MessageType = 311
 	MsgTypeHistory           MessageType = 312
 	MsgTypeSessionList       MessageType = 313
+	MsgTypeGroupHistory      MessageType = 314
 	MsgTypeGroupCreate       MessageType = 200
 	MsgTypeGroupJoin        MessageType = 201
 	MsgTypeGroupLeave       MessageType = 202
@@ -130,6 +131,12 @@ type HistoryRequest struct {
 	Limit    int   `json:"limit"`
 }
 
+type GroupHistoryRequest struct {
+	GroupID string `json:"group_id"`
+	Offset  int    `json:"offset"`
+	Limit   int    `json:"limit"`
+}
+
 type HistoryMessage struct {
 	ID        int64     `json:"id"`
 	FromQQ    int64     `json:"from_qq"`
@@ -142,6 +149,14 @@ type HistoryResponse struct {
 	TargetQQ int64            `json:"target_qq"`
 	Nickname string           `json:"nickname"`
 	Messages []HistoryMessage `json:"messages"`
+	Offset   int              `json:"offset"`
+	HasMore  bool             `json:"has_more"`
+}
+
+type GroupHistoryResponse struct {
+	GroupID  string           `json:"group_id"`
+	GroupName string          `json:"group_name"`
+	Messages  []HistoryMessage `json:"messages"`
 	Offset   int              `json:"offset"`
 	HasMore  bool             `json:"has_more"`
 }

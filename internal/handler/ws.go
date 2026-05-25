@@ -61,6 +61,7 @@ type Service interface {
 	GetGroupInfo(groupID string) (*model.GroupInfo, error)
 	IsGroupMember(groupID string, qq int64) bool
 	GetSessions(qq int64, onlineFunc func(int64) bool) ([]model.SessionInfo, error)
+	GetGroupHistory(groupID string, offset int, limit int) ([]*model.Message, bool, error)
 }
 
 func NewHub(svc Service, onStatus func(int64, bool)) *Hub {
@@ -142,6 +143,8 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleCheckUser(c, &msg)
 	case model.MsgTypeHistory:
 		h.handleHistory(c, &msg)
+	case model.MsgTypeGroupHistory:
+		h.handleGroupHistory(c, &msg)
 	case model.MsgTypeSessionList:
 		h.handleSessionList(c, &msg)
 	case model.MsgTypeGroupCreate:
@@ -683,6 +686,65 @@ func (h *Hub) handleHistory(c *ws.Conn, msg *model.Message) {
 	payload, _ := json.Marshal(resp)
 	c.WriteJSON(&model.Message{
 		MsgType: model.MsgTypeHistory,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleGroupHistory(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	var req model.GroupHistoryRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeFriendError(c, "invalid payload")
+		return
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 30
+	}
+
+	if !h.svc.IsGroupMember(req.GroupID, c.QQ) {
+		h.writeFriendError(c, "not group member")
+		return
+	}
+
+	groupInfo, err := h.svc.GetGroupInfo(req.GroupID)
+	if err != nil {
+		h.writeFriendError(c, "group not found")
+		return
+	}
+
+	msgs, hasMore, err := h.svc.GetGroupHistory(req.GroupID, req.Offset, req.Limit)
+	if err != nil {
+		log.Printf("[group-history] query error: %v", err)
+		h.writeFriendError(c, "query failed")
+		return
+	}
+
+	historyMsgs := make([]model.HistoryMessage, 0, len(msgs))
+	for _, m := range msgs {
+		historyMsgs = append(historyMsgs, model.HistoryMessage{
+			ID:        m.ID,
+			FromQQ:    m.FromQQ,
+			ToQQ:      m.ToQQ,
+			Content:   m.Content,
+			CreatedAt: m.CreatedAt,
+		})
+	}
+
+	resp := model.GroupHistoryResponse{
+		GroupID:   req.GroupID,
+		GroupName: groupInfo.Name,
+		Messages:  historyMsgs,
+		Offset:    req.Offset,
+		HasMore:   hasMore,
+	}
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeGroupHistory,
 		Content: string(payload),
 	})
 }
