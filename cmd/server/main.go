@@ -26,7 +26,7 @@ func main() {
 	log.Printf("database initialized at %s", cfg.DBPath)
 
 	svc := service.NewChatService(db)
-	hub := handler.NewHub(svc, nil)
+	hub := handler.NewHub(svc, nil, cfg.Server.MaxConnections, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)

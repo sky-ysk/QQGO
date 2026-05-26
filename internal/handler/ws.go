@@ -22,11 +22,16 @@ var upgrader = websocket.Upgrader{
 }
 
 type Hub struct {
-	mu       sync.RWMutex
-	conns    map[int64]*ws.Conn
-	groups   map[string]map[string]bool
-	svc      Service
-	onStatus func(qq int64, online bool)
+	mu         sync.RWMutex
+	conns      map[int64]*ws.Conn
+	groups     map[string]map[string]bool
+	svc        Service
+	onStatus   func(qq int64, online bool)
+	maxConns   int
+	rateLimiter interface {
+		Allow(qq int64) bool
+		Remove(qq int64)
+	}
 }
 
 type Service interface {
@@ -71,16 +76,31 @@ type Service interface {
 	RecallMessage(qq int64, messageID int64) error
 }
 
-func NewHub(svc Service, onStatus func(int64, bool)) *Hub {
+func NewHub(svc Service, onStatus func(int64, bool), maxConns int, rl interface {
+	Allow(qq int64) bool
+	Remove(qq int64)
+}) *Hub {
 	return &Hub{
-		conns:    make(map[int64]*ws.Conn),
-		groups:   make(map[string]map[string]bool),
-		svc:      svc,
-		onStatus: onStatus,
+		conns:       make(map[int64]*ws.Conn),
+		groups:      make(map[string]map[string]bool),
+		svc:         svc,
+		onStatus:    onStatus,
+		maxConns:    maxConns,
+		rateLimiter: rl,
 	}
 }
 
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	h.mu.RLock()
+	currentConns := len(h.conns)
+	h.mu.RUnlock()
+
+	if currentConns >= h.maxConns {
+		log.Printf("[conn] connection limit reached (%d/%d)", currentConns, h.maxConns)
+		http.Error(w, "connection limit reached", http.StatusServiceUnavailable)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
