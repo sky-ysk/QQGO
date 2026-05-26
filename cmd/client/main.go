@@ -227,6 +227,58 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 	case "/sessions":
 		listSessions(conn)
 
+	case "/changepw":
+		if len(parts) < 3 {
+			fmt.Println("[cmd] Usage: /changepw <old_password> <new_password>")
+			return true
+		}
+		changePassword(conn, parts[1], parts[2])
+
+	case "/block":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /block <qq_number>")
+			return true
+		}
+		qqNum, _ := strconv.ParseInt(parts[1], 10, 64)
+		blockUser(conn, qqNum)
+
+	case "/unblock":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /unblock <qq_number>")
+			return true
+		}
+		qqNum, _ := strconv.ParseInt(parts[1], 10, 64)
+		unblockUser(conn, qqNum)
+
+	case "/blacklist":
+		listBlacklist(conn)
+
+	case "/sendimg":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /sendimg <filepath>")
+			return true
+		}
+		sendFile(conn, parts[1], model.MsgTypeImage)
+
+	case "/sendfile":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /sendfile <filepath>")
+			return true
+		}
+		sendFile(conn, parts[1], model.MsgTypeFile)
+
+	case "/recall":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /recall <message_id>")
+			return true
+		}
+		msgID, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			fmt.Println("[cmd] invalid message ID")
+			return true
+		}
+		recallMessage(conn, msgID)
+
 	case "/who":
 		if targetQQ == 0 {
 			fmt.Println("[cmd] no target set, use /to <qq_number>")
@@ -267,6 +319,13 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		fmt.Println("  /mygroups                             - list my chat groups")
 		fmt.Println("  /togroup <group_id>                   - switch to group chat")
 		fmt.Println("  /sessions                             - list all chat sessions")
+		fmt.Println("  /changepw <old_password> <new_password> - change password")
+		fmt.Println("  /block <qq_number>                    - block a user")
+		fmt.Println("  /unblock <qq_number>                  - unblock a user")
+		fmt.Println("  /blacklist                            - list blocked users")
+		fmt.Println("  /sendimg <filepath>                   - send image")
+		fmt.Println("  /sendfile <filepath>                  - send file")
+		fmt.Println("  /recall <message_id>                  - recall a message")
 		fmt.Println("  /logout                               - logout and clear saved token")
 		fmt.Println("  /help                                 - show this help")
 		fmt.Println("  /quit                                 - exit")
@@ -489,6 +548,91 @@ func listSessions(conn *websocket.Conn) {
 	conn.WriteMessage(websocket.TextMessage, msg)
 }
 
+func changePassword(conn *websocket.Conn, oldPw, newPw string) {
+	payload, _ := json.Marshal(&model.ChangePasswordRequest{
+		OldPassword: oldPw,
+		NewPassword: newPw,
+	})
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeChangePassword,
+		Content: string(payload),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func blockUser(conn *websocket.Conn, qqNumber int64) {
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeBlockUser,
+		Content: strconv.FormatInt(qqNumber, 10),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func unblockUser(conn *websocket.Conn, qqNumber int64) {
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeUnblockUser,
+		Content: strconv.FormatInt(qqNumber, 10),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func listBlacklist(conn *websocket.Conn) {
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeBlacklist,
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func sendFile(conn *websocket.Conn, filepath string, msgType model.MessageType) {
+	if myQQNumber == 0 {
+		fmt.Println("[cmd] not logged in")
+		return
+	}
+	if targetQQ == 0 && targetGroupID == "" {
+		fmt.Println("[cmd] no target set, use /to or /togroup first")
+		return
+	}
+
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		fmt.Printf("[cmd] read file error: %v\n", err)
+		return
+	}
+
+	if len(data) > 5*1024*1024 {
+		fmt.Println("[cmd] file too large (max 5MB)")
+		return
+	}
+
+	fileContent := model.FileContent{
+		Filename: filepath,
+		Size:     int64(len(data)),
+		Data:     string(data),
+	}
+	payload, _ := json.Marshal(fileContent)
+
+	msg := &model.Message{
+		MsgType:   msgType,
+		ToQQ:      targetQQ,
+		GroupID:   targetGroupID,
+		ClientSeq: clientSeq,
+		Content:   string(payload),
+	}
+	msgData, _ := json.Marshal(msg)
+	conn.WriteMessage(websocket.TextMessage, msgData)
+	clientSeq++
+	sentCount++
+}
+
+func recallMessage(conn *websocket.Conn, messageID int64) {
+	payload, _ := json.Marshal(&model.RecallRequest{MessageID: messageID})
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeRecall,
+		Content: string(payload),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
 func createGroup(conn *websocket.Conn, name string) {
 	msg, _ := json.Marshal(&model.Message{
 		MsgType: model.MsgTypeFriendCreateGroup,
@@ -665,6 +809,58 @@ func main() {
 				}
 				ackData, _ := json.Marshal(ackMsg)
 				conn.WriteMessage(websocket.TextMessage, ackData)
+
+				readMsg := &model.Message{
+					MsgType: model.MsgTypeReadReceipt,
+					Content: string(ackPayload),
+				}
+				readData, _ := json.Marshal(readMsg)
+				conn.WriteMessage(websocket.TextMessage, readData)
+				prompt()
+
+			case model.MsgTypeImage, model.MsgTypeFile:
+				var fc model.FileContent
+				if err := json.Unmarshal([]byte(msg.Content), &fc); err != nil {
+					fmt.Printf("\033[2K\r[%d -> %d]: [file parse error]\n> ", msg.FromQQ, msg.ToQQ)
+					prompt()
+					break
+				}
+
+				typeLabel := "Image"
+				if msg.MsgType == model.MsgTypeFile {
+					typeLabel = "File"
+				}
+				fmt.Printf("\033[2K\r[%d -> %d]: [%s] %s (%d bytes)\n> ", msg.FromQQ, msg.ToQQ, typeLabel, fc.Filename, fc.Size)
+
+				savedPath := saveReceivedFile(myQQNumber, msg.FromQQ, fc)
+				if savedPath != "" {
+					fmt.Printf("\033[2K\r[Saved to %s]\n> ", savedPath)
+				}
+
+				senderName := fmt.Sprintf("%d", msg.FromQQ)
+				if msg.FromQQ == myQQNumber {
+					senderName = "我"
+				}
+				if msg.GroupID != "" {
+					appendGroupLog(myQQNumber, msg.GroupID, senderName, fmt.Sprintf("[%s] %s (%d bytes)", typeLabel, fc.Filename, fc.Size))
+				} else {
+					appendPrivateLog(myQQNumber, msg.FromQQ, senderName, fmt.Sprintf("[%s] %s (%d bytes)", typeLabel, fc.Filename, fc.Size))
+				}
+
+				ackPayload, _ := json.Marshal(&model.AckRequest{MessageID: msg.ID})
+				ackMsg := &model.Message{
+					MsgType: model.MsgTypeDelivered,
+					Content: string(ackPayload),
+				}
+				ackData, _ := json.Marshal(ackMsg)
+				conn.WriteMessage(websocket.TextMessage, ackData)
+
+				readMsg := &model.Message{
+					MsgType: model.MsgTypeReadReceipt,
+					Content: string(ackPayload),
+				}
+				readData, _ := json.Marshal(readMsg)
+				conn.WriteMessage(websocket.TextMessage, readData)
 				prompt()
 
 			case model.MsgTypeFriendRequest:
@@ -773,6 +969,34 @@ func main() {
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
 					historyGroupName = resp.GroupName
 					displayGroupHistory(resp)
+				}
+				prompt()
+
+			case model.MsgTypeChangePasswordAck:
+				var resp model.ChangePasswordResponse
+				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
+					if resp.Code == 0 {
+						if resp.Token != "" {
+							saveToken(myQQNumber, resp.Token)
+						}
+						fmt.Printf("\033[2K\r[Server]: password changed successfully\n> ")
+					} else {
+						fmt.Printf("\033[2K\r[Server]: %s\n> ", resp.Message)
+					}
+				}
+				prompt()
+
+			case model.MsgTypeBlacklist:
+				var resp model.BlacklistResponse
+				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
+					displayBlacklist(resp.BlockedUsers)
+				}
+				prompt()
+
+			case model.MsgTypeRecallNotify:
+				var notify model.RecallNotify
+				if err := json.Unmarshal([]byte(msg.Content), &notify); err == nil {
+					fmt.Printf("\033[2K\r[Recall] message #%d recalled by %d\n> ", notify.MessageID, notify.FromQQ)
 				}
 				prompt()
 
@@ -1018,4 +1242,16 @@ func displayGroupHistory(resp model.GroupHistoryResponse) {
 		fmt.Println("  (use /next for newer messages)")
 	}
 	fmt.Println("─────────────────────────────────────")
+}
+
+func displayBlacklist(users []model.BlockedUserInfo) {
+	fmt.Println("\n───── Blacklist ─────")
+	if len(users) == 0 {
+		fmt.Println("  (empty)")
+	} else {
+		for _, u := range users {
+			fmt.Printf("  QQ:%-8d  %s\n", u.QQNumber, u.Nickname)
+		}
+	}
+	fmt.Println("─────────────────────")
 }

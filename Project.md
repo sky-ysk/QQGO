@@ -496,6 +496,50 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 
 ---
 
+## 版本 0.7 — 2026-05-26 已完成
+
+### 核心功能补全 & 体验完善
+
+聚焦 P1/P2 级功能，补齐现代 IM 基础能力。
+
+### P0 — BUG 修复
+
+| 项 | 说明 | 状态 |
+|----|------|------|
+| **Server 优雅退出** | `srv.Close()` → `srv.Shutdown(ctx)` + Hub 清理 + DB 关闭；Ctrl+C 端口立即释放 | ✅ fixed |
+| **SQLite GREATEST 兼容** | `LeaveGroup` 中 `GREATEST()` → `MAX()`；消除 SQLite 函数不支持报错 | ✅ fixed |
+
+### P1 — 测试补全
+
+| 项 | 说明 | 状态 |
+|----|------|------|
+| **BUG-005** | 好友上限 500 边界测试（TestFriendLimit500） | ✅ tested |
+| **BUG-006** | 离线好友请求持久化 E2E 测试（TestOfflineFriendRequest） | ✅ tested |
+
+### P2 — 新功能
+
+| 需求 | 说明 | 状态 |
+|------|------|------|
+| **修改密码** | `/changepw <old> <new>`，旧密码校验 + Token 刷新 | ✅ done |
+| **黑名单** | `blacklists` 表 + `/block` `/unblock` `/blacklist` + 消息拒绝 | ✅ done |
+| **图片/文件消息** | `/sendimg` `/sendfile` + base64 传输（≤5MB）+ 自动保存 | ✅ done |
+| **消息已读/未读** | `read_at` 字段 + 自动已读回执 | ✅ done |
+| **消息撤回** | `is_recalled` 字段 + `/recall`（2 分钟内）+ 历史过滤 + 群广播 | ✅ done |
+
+### 测试
+
+20 个测试全部通过（10 个新增 + 10 个已有），覆盖率：
+- 非好友消息限制、好友上限、离线好友请求
+- 群组 CRUD、群聊历史
+- 修改密码、黑名单
+- 已读回执、消息撤回
+
+### 新增消息类型
+
+`MsgTypeChangePassword(400)`, `MsgTypeChangePasswordAck(401)`, `MsgTypeBlockUser(410)`, `MsgTypeUnblockUser(411)`, `MsgTypeBlacklist(412)`, `MsgTypeReadReceipt(420)`, `MsgTypeRecall(430)`, `MsgTypeRecallNotify(431)`
+
+---
+
 ## 后续版本需求优先级列表
 
 按 **紧急程度 × 重要程度 × 实现难度** 排序：
@@ -521,10 +565,15 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 | **P1** | v0.6 | BUG-010 修复 | bugfix | ✅ /leavegroup 后无法退出群聊窗口 |
 | **P1** | v0.6 | 群聊历史记录 | feature | ✅ 群聊支持 /prev /next 翻页 |
 | **P1** | v0.6 | 群成员发送前校验 | feature | ✅ 客户端发消息前校验群成员身份 |
-| **P2** | v0.6+ | 消息类型扩展 | feature | 图片、文件、语音 |
-| **P2** | v0.6+ | 修改密码 | feature | `/changepw` |
+| **P2** | v0.7 | Server 优雅退出 | bugfix | ✅ srv.Shutdown + Hub 清理 + DB 关闭 |
+| **P2** | v0.7 | SQLite GREATEST 兼容 | bugfix | ✅ GREATEST → MAX |
+| **P2** | v0.7 | BUG-005/006 测试覆盖 | test | ✅ 好友上限 + 离线好友请求 |
+| **P2** | v0.7 | 消息类型扩展 | feature | ✅ 图片、文件（base64 ≤5MB） |
+| **P2** | v0.7 | 修改密码 | feature | ✅ `/changepw` + Token 刷新 |
+| **P2** | v0.7 | 黑名单 | feature | ✅ `blacklists` 表 + `/block` `/unblock` |
+| **P2** | v0.7 | 消息已读 | feature | ✅ `read_at` 字段 + 自动回执 |
+| **P2** | v0.7 | 消息撤回 | feature | ✅ `is_recalled` + 2 分钟限制 + 历史过滤 |
 | **P2** | v0.6+ | 数据库管理接口 | feature | 导出/备份/清理 |
 | **P3** | v0.7+ | 桌面端 GUI | feature | Wails 或 Fyne |
 | **P3** | v0.7+ | Protobuf 协议 | infra | 替换 JSON |
-| **P3** | v0.7+ | 消息已读/撤回 | feature | 已读回执、消息撤回 |
 | **P3** | v0.8+ | TLS / 限流 / Docker | infra | 生产就绪

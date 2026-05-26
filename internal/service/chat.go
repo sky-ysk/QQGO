@@ -115,6 +115,32 @@ func (s *ChatService) MarkDelivered(messageID int64) error {
 	return s.db.Model(&model.Message{}).Where("id = ?", messageID).Update("delivered", true).Error
 }
 
+func (s *ChatService) MarkRead(messageID int64) error {
+	now := time.Now()
+	return s.db.Model(&model.Message{}).Where("id = ? AND read_at IS NULL", messageID).Update("read_at", now).Error
+}
+
+func (s *ChatService) RecallMessage(qq int64, messageID int64) error {
+	var msg model.Message
+	if err := s.db.Where("id = ?", messageID).First(&msg).Error; err != nil {
+		return errors.New("message not found")
+	}
+
+	if msg.FromQQ != qq {
+		return errors.New("only sender can recall message")
+	}
+
+	if time.Since(msg.CreatedAt) > 2*time.Minute {
+		return errors.New("can only recall messages within 2 minutes")
+	}
+
+	if msg.IsRecalled {
+		return errors.New("message already recalled")
+	}
+
+	return s.db.Model(&msg).Update("is_recalled", true).Error
+}
+
 func (s *ChatService) GetHistory(ctx context.Context, qq int64, limit int) ([]*model.Message, error) {
 	var msgs []*model.Message
 	err := s.db.
@@ -461,7 +487,7 @@ func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset in
 	query := s.db.Where(
 		"((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ''",
 		myQQ, targetQQ, targetQQ, myQQ,
-	).Where("msg_type IN ?", []int{1, 2, 3})
+	).Where("msg_type IN ?", []int{1, 2, 3}).Where("is_recalled = ?", false)
 
 	var total int64
 	query.Model(&model.Message{}).Count(&total)
@@ -481,7 +507,7 @@ func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset in
 
 func (s *ChatService) GetGroupHistory(groupID string, offset int, limit int) ([]*model.Message, bool, error) {
 	var msgs []*model.Message
-	query := s.db.Where("group_id = ?", groupID).Where("msg_type IN ?", []int{1, 2, 3})
+	query := s.db.Where("group_id = ?", groupID).Where("msg_type IN ?", []int{1, 2, 3}).Where("is_recalled = ?", false)
 
 	var total int64
 	query.Model(&model.Message{}).Count(&total)
@@ -565,7 +591,7 @@ func (s *ChatService) LeaveGroup(groupID string, qq int64) error {
 		return errors.New("not in group")
 	}
 
-	s.db.Model(&model.Group{}).Where("group_id = ?", groupID).Update("member_cnt", gorm.Expr("GREATEST(member_cnt - 1, 0)"))
+	s.db.Model(&model.Group{}).Where("group_id = ?", groupID).Update("member_cnt", gorm.Expr("MAX(member_cnt - 1, 0)"))
 	return nil
 }
 
@@ -728,6 +754,83 @@ func (s *ChatService) GetSessions(qq int64, onlineFunc func(int64) bool) ([]mode
 	})
 
 	return sessions, nil
+}
+
+func (s *ChatService) ChangePassword(qq int64, oldPassword, newPassword string) (string, error) {
+	var user model.User
+	if err := s.db.Where("qq_number = ?", qq).First(&user).Error; err != nil {
+		return "", ErrUserNotFound
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
+		return "", ErrAuthFailed
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+
+	newToken := generateToken()
+	s.db.Model(&user).Updates(map[string]interface{}{
+		"password_hash": string(newHash),
+		"token":         newToken,
+	})
+
+	return newToken, nil
+}
+
+func (s *ChatService) BlockUser(qq int64, blockedQQ int64) error {
+	if qq == blockedQQ {
+		return errors.New("cannot block yourself")
+	}
+
+	if _, err := s.GetUserByQQ(blockedQQ); err != nil {
+		return ErrUserNotFound
+	}
+
+	var existing model.Blacklist
+	err := s.db.Where("qq = ? AND blocked_qq = ?", qq, blockedQQ).First(&existing).Error
+	if err == nil {
+		return errors.New("user already blocked")
+	}
+
+	return s.db.Create(&model.Blacklist{
+		QQ:        qq,
+		BlockedQQ: blockedQQ,
+	}).Error
+}
+
+func (s *ChatService) UnblockUser(qq int64, blockedQQ int64) error {
+	result := s.db.Where("qq = ? AND blocked_qq = ?", qq, blockedQQ).Delete(&model.Blacklist{})
+	if result.RowsAffected == 0 {
+		return errors.New("user not in blacklist")
+	}
+	return nil
+}
+
+func (s *ChatService) IsBlocked(qq int64, blockedQQ int64) bool {
+	var count int64
+	s.db.Model(&model.Blacklist{}).Where("qq = ? AND blocked_qq = ?", qq, blockedQQ).Count(&count)
+	return count > 0
+}
+
+func (s *ChatService) GetBlacklist(qq int64) ([]model.BlockedUserInfo, error) {
+	var blocks []model.Blacklist
+	s.db.Where("qq = ?", qq).Find(&blocks)
+
+	result := make([]model.BlockedUserInfo, 0, len(blocks))
+	for _, b := range blocks {
+		user, err := s.GetUserByQQ(b.BlockedQQ)
+		if err != nil {
+			continue
+		}
+		result = append(result, model.BlockedUserInfo{
+			QQNumber: user.QQNumber,
+			Nickname: user.Nickname,
+		})
+	}
+	return result, nil
 }
 
 func generateToken() string {

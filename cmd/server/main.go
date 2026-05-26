@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/qqgo/server/internal/config"
 	"github.com/qqgo/server/internal/handler"
@@ -45,7 +47,22 @@ func main() {
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Println("shutting down server...")
-		srv.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		hub.Shutdown()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("server shutdown error: %v", err)
+		}
+
+		sqlDB, err := db.DB()
+		if err == nil {
+			sqlDB.Close()
+		}
+
+		log.Println("server exited")
 	}()
 
 	log.Printf("QQGO server starting on %s", addr)

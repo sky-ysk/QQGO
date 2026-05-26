@@ -62,6 +62,13 @@ type Service interface {
 	IsGroupMember(groupID string, qq int64) bool
 	GetSessions(qq int64, onlineFunc func(int64) bool) ([]model.SessionInfo, error)
 	GetGroupHistory(groupID string, offset int, limit int) ([]*model.Message, bool, error)
+	ChangePassword(qq int64, oldPassword, newPassword string) (string, error)
+	BlockUser(qq int64, blockedQQ int64) error
+	UnblockUser(qq int64, blockedQQ int64) error
+	IsBlocked(qq int64, blockedQQ int64) bool
+	GetBlacklist(qq int64) ([]model.BlockedUserInfo, error)
+	MarkRead(messageID int64) error
+	RecallMessage(qq int64, messageID int64) error
 }
 
 func NewHub(svc Service, onStatus func(int64, bool)) *Hub {
@@ -159,6 +166,18 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleGroupInfo(c, &msg)
 	case model.MsgTypeText, model.MsgTypeImage, model.MsgTypeFile:
 		h.handleChatMessage(c, &msg)
+	case model.MsgTypeChangePassword:
+		h.handleChangePassword(c, &msg)
+	case model.MsgTypeBlockUser:
+		h.handleBlockUser(c, &msg)
+	case model.MsgTypeUnblockUser:
+		h.handleUnblockUser(c, &msg)
+	case model.MsgTypeBlacklist:
+		h.handleBlacklist(c, &msg)
+	case model.MsgTypeReadReceipt:
+		h.handleReadReceipt(c, &msg)
+	case model.MsgTypeRecall:
+		h.handleRecall(c, &msg)
 	default:
 		log.Printf("[dispatch] unknown msgType=%d", msg.MsgType)
 	}
@@ -318,6 +337,17 @@ func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
 				ID:        -1,
 				ClientSeq: msg.ClientSeq,
 				Content:   "user not found",
+			})
+			return
+		}
+
+		if h.svc.IsBlocked(msg.ToQQ, c.QQ) {
+			log.Printf("[chat] qq=%d has blocked qq=%d", msg.ToQQ, c.QQ)
+			c.WriteJSON(&model.Message{
+				MsgType:   model.MsgTypeServerAck,
+				ID:        -1,
+				ClientSeq: msg.ClientSeq,
+				Content:   "you are blocked by the recipient",
 			})
 			return
 		}
@@ -1094,6 +1124,169 @@ func (h *Hub) LeaveGroup(qq int64, groupID string) {
 		delete(members, strconv.FormatInt(qq, 10))
 		if len(members) == 0 {
 			delete(h.groups, groupID)
+		}
+	}
+}
+
+func (h *Hub) Shutdown() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for qq, conn := range h.conns {
+		conn.Close()
+		delete(h.conns, qq)
+	}
+
+	log.Printf("[hub] all connections closed, online was: %d", len(h.conns))
+}
+
+func (h *Hub) handleChangePassword(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	var req model.ChangePasswordRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeFriendError(c, "invalid payload")
+		return
+	}
+
+	if req.OldPassword == "" || req.NewPassword == "" {
+		h.writeFriendError(c, "old_password and new_password required")
+		return
+	}
+
+	newToken, err := h.svc.ChangePassword(c.QQ, req.OldPassword, req.NewPassword)
+	if err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	log.Printf("[changepw] qq=%d changed password", c.QQ)
+	payload, _ := json.Marshal(&model.ChangePasswordResponse{
+		Code:    0,
+		Message: "password changed",
+		Token:   newToken,
+	})
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeChangePasswordAck,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleBlockUser(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	qq, err := strconv.ParseInt(msg.Content, 10, 64)
+	if err != nil {
+		h.writeFriendError(c, "invalid QQ number")
+		return
+	}
+
+	if err := h.svc.BlockUser(c.QQ, qq); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	log.Printf("[block] qq=%d blocked qq=%d", c.QQ, qq)
+	h.writeFriendResult(c, "user blocked")
+}
+
+func (h *Hub) handleUnblockUser(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	qq, err := strconv.ParseInt(msg.Content, 10, 64)
+	if err != nil {
+		h.writeFriendError(c, "invalid QQ number")
+		return
+	}
+
+	if err := h.svc.UnblockUser(c.QQ, qq); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	log.Printf("[unblock] qq=%d unblocked qq=%d", c.QQ, qq)
+	h.writeFriendResult(c, "user unblocked")
+}
+
+func (h *Hub) handleBlacklist(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	blocked, err := h.svc.GetBlacklist(c.QQ)
+	if err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	resp := model.BlacklistResponse{BlockedUsers: blocked}
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeBlacklist,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleReadReceipt(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		return
+	}
+
+	var req model.AckRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		return
+	}
+
+	h.svc.MarkRead(req.MessageID)
+}
+
+func (h *Hub) handleRecall(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	var req model.RecallRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeFriendError(c, "invalid payload")
+		return
+	}
+
+	if err := h.svc.RecallMessage(c.QQ, req.MessageID); err != nil {
+		h.writeFriendError(c, err.Error())
+		return
+	}
+
+	log.Printf("[recall] qq=%d recalled message id=%d", c.QQ, req.MessageID)
+	h.writeFriendResult(c, "message recalled")
+
+	notify := model.RecallNotify{
+		MessageID: req.MessageID,
+		FromQQ:    c.QQ,
+	}
+	notifyData, _ := json.Marshal(notify)
+
+	if msg.GroupID != "" {
+		members, err := h.svc.GetGroupMembers(msg.GroupID)
+		if err == nil {
+			for _, qq := range members {
+				if qq != c.QQ {
+					h.sendToUser(qq, &model.Message{
+						MsgType: model.MsgTypeRecallNotify,
+						Content: string(notifyData),
+					})
+				}
+			}
 		}
 	}
 }

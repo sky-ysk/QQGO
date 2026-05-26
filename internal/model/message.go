@@ -40,6 +40,18 @@ const (
 	MsgTypeGroupLeave       MessageType = 202
 	MsgTypeGroupList        MessageType = 203
 	MsgTypeGroupInfo        MessageType = 204
+
+	MsgTypeChangePassword    MessageType = 400
+	MsgTypeChangePasswordAck MessageType = 401
+
+	MsgTypeBlockUser    MessageType = 410
+	MsgTypeUnblockUser  MessageType = 411
+	MsgTypeBlacklist    MessageType = 412
+
+	MsgTypeReadReceipt  MessageType = 420
+
+	MsgTypeRecall       MessageType = 430
+	MsgTypeRecallNotify MessageType = 431
 )
 
 const MaxFriends = 500
@@ -53,6 +65,8 @@ type Message struct {
 	GroupID   string      `gorm:"index" json:"group_id,omitempty"`
 	Content   string      `gorm:"not null" json:"content"`
 	Delivered bool        `gorm:"default:false" json:"delivered"`
+	ReadAt    *time.Time  `json:"read_at,omitempty"`
+	IsRecalled bool       `gorm:"default:false" json:"is_recalled"`
 	CreatedAt time.Time   `gorm:"index" json:"created_at"`
 	UpdatedAt time.Time   `json:"-"`
 }
@@ -201,4 +215,40 @@ type SessionInfo struct {
 
 type SessionListResponse struct {
 	Sessions []SessionInfo `json:"sessions"`
+}
+
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+type ChangePasswordResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Token   string `json:"token,omitempty"`
+}
+
+type BlockedUserInfo struct {
+	QQNumber int64  `json:"qq_number"`
+	Nickname string `json:"nickname"`
+}
+
+type BlacklistResponse struct {
+	BlockedUsers []BlockedUserInfo `json:"blocked_users"`
+}
+
+type FileContent struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	Data     string `json:"data"`
+}
+
+type RecallRequest struct {
+	MessageID int64 `json:"message_id"`
+}
+
+type RecallNotify struct {
+	MessageID int64  `json:"message_id"`
+	FromQQ    int64  `json:"from_qq"`
+	GroupID   string `json:"group_id,omitempty"`
 }

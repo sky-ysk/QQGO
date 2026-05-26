@@ -23,6 +23,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 		&model.Group{},
 		&model.GroupMember{},
 		&model.Message{},
+		&model.Blacklist{},
 	); err != nil {
 		return nil, err
 	}

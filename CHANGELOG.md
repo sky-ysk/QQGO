@@ -2,6 +2,34 @@
 
 ---
 
+## [v0.7] — 2026-05-26 / branch: `main`
+
+### Added
+- **修改密码：** `/changepw <old> <new>` 命令，旧密码校验 + bcrypt 新密码写入，自动刷新 Token
+- **黑名单：** `blacklists` 表；`/block`、`/unblock`、`/blacklist` 命令；被拉黑用户发消息被拒绝
+- **图片/文件消息：** `/sendimg <filepath>`、`/sendfile <filepath>` 命令；base64 编码传输（≤5MB）；接收方自动保存到 `DATA/<qq>/recv/`
+- **消息已读/未读：** `messages.read_at` 字段；客户端收到消息自动发送已读回执（`MsgTypeReadReceipt`）
+- **消息撤回：** `messages.is_recalled` 字段；`/recall <message_id>` 命令（发送者、2 分钟内）；撤回消息从历史中过滤；群聊撤回广播通知
+- **新消息类型：** `MsgTypeChangePassword(400)`, `MsgTypeChangePasswordAck(401)`, `MsgTypeBlockUser(410)`, `MsgTypeUnblockUser(411)`, `MsgTypeBlacklist(412)`, `MsgTypeReadReceipt(420)`, `MsgTypeRecall(430)`, `MsgTypeRecallNotify(431)`
+- **新数据模型：** `Blacklist` 表；`Message.ReadAt`、`Message.IsRecalled` 字段；`FileContent`、`RecallRequest`、`RecallNotify` DTO
+- **新文件：** `docs/superpowers/specs/2026-05-26-v0.7-batch{1,2,3}-design.md`、`docs/superpowers/tests/2026-05-26-v0.7-test-report.md`
+- **单元测试：** 10 个新测试（好友上限、离线好友请求、修改密码、黑名单、已读、撤回），总计 20 个测试
+
+### Fixed
+- **Server 优雅退出：** `srv.Close()` → `srv.Shutdown(ctx)` + `hub.Shutdown()` + `db.Close()`；Ctrl+C 后端口立即释放，可立即重启
+- **SQLite GREATEST 兼容：** `LeaveGroup` 中 `GREATEST(member_cnt - 1, 0)` → `MAX(member_cnt - 1, 0)`；不再报 SQLite 函数不支持错误
+- **BUG-005：** 好友上限 500 边界测试补充（TestFriendLimit500）
+- **BUG-006：** 离线好友请求持久化 E2E 测试补充（TestOfflineFriendRequest）
+
+### Changed
+- **handleChatMessage：** 增加黑名单检查（被拉黑者发消息返回 "you are blocked by the recipient"）
+- **GetHistoryWithTarget / GetGroupHistory：** 过滤 `is_recalled = false`，撤回消息不出现在历史中
+- **客户端消息接收：** 收到文本/图片/文件消息后自动发送已读回执
+- **cmd/server/main.go：** 优雅关闭流程（5s timeout + Hub 连接清理 + 数据库关闭）
+- **cmd/client/localstore.go：** 新增 `saveReceivedFile` 保存接收到的文件到 `DATA/<qq>/recv/`
+
+---
+
 ## [v0.6] — 2026-05-25 / branch: `feature/v0.6`
 
 ### Added

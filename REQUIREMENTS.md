@@ -31,7 +31,7 @@
 | **群组聊天** | 创建群、加群、群消息广播 | ✅ done | v0.5 |
 | **会话历史记录** | `/to` 后显示最近 30 条历史消息，支持翻页 | ✅ done | v0.5 |
 | **会话列表** | 列出所有会话（每个联系人/群一个会话窗口） | ✅ done | v0.5 |
-| **消息类型扩展** | 图片、文件、语音消息 | 🔲 pending | — |
+| **消息类型扩展** | 图片、文件、语音消息 | ✅ done | v0.7 |
 | **历史消息查询** | 按时间/会话拉取历史记录 | 🔲 pending | — |
 | **会话搜索** | 在历史记录中按关键词搜索 | 🔲 pending | — |
 | **本地聊天日志** | 客户端按 QQ 号分目录保存聊天记录到本地 DATA 目录 | ✅ done | v0.6 |
@@ -197,6 +197,62 @@
 
 ---
 
+### v0.7 计划详情
+
+#### 0. Server 优雅退出 `P0` ✅
+
+- `srv.Close()` → `srv.Shutdown(ctx)` with 5s timeout
+- `hub.Shutdown()` 关闭所有 WebSocket 连接
+- `db.DB().Close()` 关闭 SQLite 连接
+- Ctrl+C 后端口 8080 立即释放，可立即重启
+
+#### 1. SQLite GREATEST 兼容修复 `P0` ✅
+
+- `LeaveGroup` 中 `GREATEST(member_cnt - 1, 0)` → `MAX(member_cnt - 1, 0)`
+- SQLite 不支持 GREATEST 函数，MAX 为等效替代
+
+#### 2. BUG-005/006 测试覆盖 `P1` ✅
+
+- `TestFriendLimit500` — 499 好友 → 接受 500th → 接受 501st 失败 ErrFriendLimit
+- `TestOfflineFriendRequest` — 离线请求持久化 → 待处理可见 → 接受后双向好友
+
+#### 3. 修改密码 `P2` ✅
+
+- `/changepw <old_password> <new_password>` 命令
+- 旧密码 bcrypt 校验 → 新密码 bcrypt 写入 → Token 自动刷新
+- 新消息类型：`MsgTypeChangePassword(400)`, `MsgTypeChangePasswordAck(401)`
+
+#### 4. 黑名单 `P2` ✅
+
+- `blacklists` 表（qq, blocked_qq 唯一索引）
+- `/block <qq>`、`/unblock <qq>`、`/blacklist` 命令
+- 被拉黑用户发消息被拒绝："you are blocked by the recipient"
+- 不能拉黑自己，不能重复拉黑
+- 新消息类型：`MsgTypeBlockUser(410)`, `MsgTypeUnblockUser(411)`, `MsgTypeBlacklist(412)`
+
+#### 5. 图片/文件消息 `P2` ✅
+
+- `/sendimg <filepath>`、`/sendfile <filepath>` 命令
+- base64 编码传输，最大 5MB
+- 接收方自动保存到 `DATA/<qq>/recv/<fromQQ>_<filename>`
+- `FileContent{Filename, Size, Data}` DTO
+
+#### 6. 消息已读/未读 `P2` ✅
+
+- `messages.read_at` 字段（nil = 未读）
+- 客户端收到消息自动发送 `MsgTypeReadReceipt(420)`
+- `MarkRead(messageID)` 服务方法
+
+#### 7. 消息撤回 `P2` ✅
+
+- `messages.is_recalled` 字段
+- `/recall <message_id>` 命令（仅发送者、2 分钟内）
+- 撤回消息从历史查询中过滤（`is_recalled = false`）
+- 群聊撤回广播通知 `MsgTypeRecallNotify(431)`
+- 新消息类型：`MsgTypeRecall(430)`, `MsgTypeRecallNotify(431)`
+
+---
+
 ## P2 — 体验与架构
 
 | 需求 | 说明 | 状态 | 完成版本 |
@@ -205,7 +261,7 @@
 | **Protobuf 协议** | 替换 JSON 序列化，降低带宽 | 🔲 pending | — |
 | **分布式扩展** | 接入 NATS/Redis PubSub 实现多网关消息路由 | 🔲 pending | — |
 | **在线状态** | Redis 缓存在线状态，支持状态变更通知 | 🔲 pending | — |
-| **消息已读** | 已读回执、未读计数 | 🔲 pending | — |
+| **消息已读** | 已读回执、未读计数 | ✅ done | v0.7 |
 
 ---
 
@@ -225,9 +281,9 @@
 | 需求 | 说明 | 优先级 | 备注 |
 |------|------|--------|------|
 | **数据库管理接口** | 数据导出/备份/清理接口 | P2 | 测试中提出，原文不完整 |
-| **修改密码** | `/changepw` 命令 | P2 | — |
-| **消息撤回** | 发送方撤回已发送消息 | P2 | — |
-| **黑名单** | 拉黑用户，拒绝接收消息 | P2 | — |
+| **修改密码** | `/changepw` 命令 | P2 | ✅ done v0.7 |
+| **消息撤回** | 发送方撤回已发送消息 | P2 | ✅ done v0.7 |
+| **黑名单** | 拉黑用户，拒绝接收消息 | P2 | ✅ done v0.7 |
 
 ---
 

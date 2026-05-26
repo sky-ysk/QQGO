@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qqgo/server/internal/model"
 )
 
 const defaultDataDir = "DATA"
@@ -123,4 +125,23 @@ func findSavedQQ() (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func saveReceivedFile(myQQ int64, fromQQ int64, fc model.FileContent) string {
+	if myQQ == 0 {
+		return ""
+	}
+	ensureUserDir(myQQ)
+	recvDir := filepath.Join(userDir(myQQ), "recv")
+	os.MkdirAll(recvDir, 0755)
+
+	safeName := strconv.FormatInt(fromQQ, 10) + "_" + filepath.Base(fc.Filename)
+	savePath := filepath.Join(recvDir, safeName)
+
+	err := os.WriteFile(savePath, []byte(fc.Data), 0644)
+	if err != nil {
+		log.Printf("[localstore] save received file error: %v", err)
+		return ""
+	}
+	return savePath
 }

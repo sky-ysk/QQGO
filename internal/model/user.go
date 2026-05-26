@@ -68,3 +68,10 @@ type MessageCount struct {
 }
 
 const MaxNonFriendMessages = 1
+
+type Blacklist struct {
+	ID         uint      `gorm:"primaryKey" json:"-"`
+	QQ         int64     `gorm:"uniqueIndex:idx_qq_blocked;not null" json:"qq"`
+	BlockedQQ  int64     `gorm:"uniqueIndex:idx_qq_blocked;not null" json:"blocked_qq"`
+	CreatedAt  time.Time `json:"created_at"`
+}
