@@ -7,11 +7,12 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	DBPath   string
-	Redis    RedisConfig
-	Postgres PostgresConfig
-	NATS     NATSConfig
+	Server       ServerConfig
+	DBPath       string
+	Redis        RedisConfig
+	Postgres     PostgresConfig
+	NATS         NATSConfig
+	MsgRateLimit int
 }
 
 type ServerConfig struct {
@@ -63,6 +64,7 @@ func Load() *Config {
 		NATS: NATSConfig{
 			URL: env("NATS_URL", "nats://localhost:4222"),
 		},
+		MsgRateLimit: envInt("MSG_RATE_LIMIT", 10),
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/qqgo/server/internal/config"
 	"github.com/qqgo/server/internal/handler"
+	"github.com/qqgo/server/internal/middleware"
 	"github.com/qqgo/server/internal/service"
 	"github.com/qqgo/server/internal/store"
 )
@@ -26,7 +27,8 @@ func main() {
 	log.Printf("database initialized at %s", cfg.DBPath)
 
 	svc := service.NewChatService(db)
-	hub := handler.NewHub(svc, nil, cfg.Server.MaxConnections, nil)
+	rl := middleware.NewRateLimiter(cfg.MsgRateLimit)
+	hub := handler.NewHub(svc, nil, cfg.Server.MaxConnections, rl)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)

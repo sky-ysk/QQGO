@@ -135,6 +135,23 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		return
 	}
 
+	if c.QQ != 0 && h.rateLimiter != nil {
+		switch msg.MsgType {
+		case model.MsgTypeLogin, model.MsgTypeRegister, model.MsgTypeHeartbeat:
+		default:
+			if !h.rateLimiter.Allow(c.QQ) {
+				log.Printf("[ratelimit] qq=%d exceeded rate limit", c.QQ)
+				c.WriteJSON(&model.Message{
+					MsgType:   model.MsgTypeServerAck,
+					ID:        -1,
+					ClientSeq: msg.ClientSeq,
+					Content:   "rate limit exceeded",
+				})
+				return
+			}
+		}
+	}
+
 	switch msg.MsgType {
 	case model.MsgTypeLogin:
 		h.handleLogin(c, &msg)
@@ -1115,6 +1132,10 @@ func (h *Hub) RemoveUser(qq int64) {
 
 	if h.onStatus != nil {
 		h.onStatus(qq, false)
+	}
+
+	if h.rateLimiter != nil {
+		h.rateLimiter.Remove(qq)
 	}
 
 	log.Printf("[conn] user qq=%d disconnected, online: %d", qq, len(h.conns))
