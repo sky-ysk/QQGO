@@ -21,6 +21,8 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration
 	MaxConnections  int
 	HeartbeatPeriod time.Duration
+	TLSCert         string
+	TLSKey          string
 }
 
 type RedisConfig struct {
@@ -46,6 +48,8 @@ func Load() *Config {
 			WriteTimeout:    10 * time.Second,
 			MaxConnections:  envInt("MAX_CONNECTIONS", 10000),
 			HeartbeatPeriod: 30 * time.Second,
+			TLSCert:         env("TLS_CERT", ""),
+			TLSKey:          env("TLS_KEY", ""),
 		},
 		DBPath: env("DB_PATH", "./qqgo.db"),
 		Redis: RedisConfig{
