@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -681,10 +683,30 @@ func prompt() {
 func main() {
 	initDataDir()
 
-	addr := "ws://localhost:8080/ws"
+	scheme := os.Getenv("SERVER_SCHEME")
+	if scheme == "" {
+		scheme = "ws"
+	}
+	host := os.Getenv("SERVER_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := fmt.Sprintf("%s://%s:%s/ws", scheme, host, port)
 	fmt.Printf("Connecting to %s...\n", addr)
 
-	conn, _, err := websocket.DefaultDialer.Dial(addr, nil)
+	dialer := websocket.DefaultDialer
+	if scheme == "wss" {
+		dialer = &websocket.Dialer{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+
+	u, _ := url.Parse(addr)
+	conn, _, err := dialer.Dial(u.String(), nil)
 	if err != nil {
 		log.Fatalf("dial error: %v", err)
 	}
