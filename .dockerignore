@@ -1,0 +1,8 @@
+qqgo.db
+DATA/
+certs/
+*.test
+*.prof
+.git/
+.gitignore
+docs/
