@@ -65,8 +65,15 @@ func main() {
 		log.Println("server exited")
 	}()
 
-	log.Printf("QQGO server starting on %s", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+	if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
+		log.Printf("QQGO server starting (wss) on %s", addr)
+		if err := srv.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	} else {
+		log.Printf("QQGO server starting (ws) on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
 	}
 }
