@@ -540,6 +540,27 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 
 ---
 
+## 版本 0.8 — 2026-05-26 已完成
+
+### Batch 1：部署与安全基础
+
+| 功能 | 说明 | 状态 |
+|------|------|------|
+| **Docker 部署** | Dockerfile 多阶段构建 + docker-compose.yml | ✅ done |
+| **TLS/SSL** | wss:// 支持，自签证书脚本，客户端 wss 连接 | ✅ done |
+| **限流中间件** | 连接限流 (MAX_CONNECTIONS) + 消息频率限制 (MSG_RATE_LIMIT) | ✅ done |
+
+### 新增环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `TLS_CERT` | `""` | TLS 证书文件路径 |
+| `TLS_KEY` | `""` | TLS 私钥文件路径 |
+| `SERVER_SCHEME` | `ws` | 客户端连接协议（ws/wss） |
+| `MSG_RATE_LIMIT` | `10` | 每用户每秒最大消息数 |
+
+---
+
 ## 后续版本需求优先级列表
 
 按 **紧急程度 × 重要程度 × 实现难度** 排序：

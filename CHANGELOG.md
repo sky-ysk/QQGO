@@ -2,6 +2,25 @@
 
 ---
 
+## [v0.8] — 2026-05-26 / branch: `main`
+
+### Added
+- **Docker 部署：** `Dockerfile`（多阶段构建）+ `docker-compose.yml`（server + SQLite volume）；Redis/NATS 预留
+- **TLS/SSL：** 服务端支持 `TLS_CERT`/`TLS_KEY` 配置，有证书时启动 `wss://`，无时降级 `ws://`；自签证书生成脚本 `scripts/gen-cert.sh`
+- **客户端 wss 支持：** `SERVER_SCHEME` 环境变量配置连接协议（`ws`/`wss`）；自签证书 `InsecureSkipVerify`
+- **连接限流：** `MAX_CONNECTIONS` 生效，WebSocket 升级前检查连接数，超限返回 HTTP 503
+- **消息频率限制：** `MSG_RATE_LIMIT` 环境变量（默认 10 条/秒），per-user 令牌桶限流，超限返回错误不断开连接
+- **新依赖：** `golang.org/x/time`
+- **新文件：** `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `scripts/gen-cert.sh`, `internal/middleware/ratelimit.go`, `internal/middleware/ratelimit_test.go`, `internal/handler/ws_test.go`
+
+### Changed
+- **internal/config：** 新增 `TLSCert`, `TLSKey`, `MsgRateLimit` 配置项
+- **cmd/server/main.go：** TLS 条件启动 + Hub 传入 maxConns 和 rateLimiter
+- **cmd/client/main.go：** 连接 URL 从硬编码改为环境变量配置
+- **internal/handler/ws.go：** Hub 新增 maxConns/rateLimiter 字段；ServeWS 连接限流；dispatch 消息限流；RemoveUser 清理限流器
+
+---
+
 ## [v0.7] — 2026-05-26 / branch: `main`
 
 ### Added

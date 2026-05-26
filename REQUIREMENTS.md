@@ -269,9 +269,9 @@
 
 | 需求 | 说明 | 状态 | 完成版本 |
 |------|------|------|----------|
-| **TLS/SSL** | WebSocket 加密传输 | 🔲 pending | — |
-| **限流/鉴权** | 接口限流、JWT Token | 🔲 pending | — |
-| **Docker 部署** | Dockerfile + docker-compose 一键启动 | 🔲 pending | — |
+| **TLS/SSL** | WebSocket 加密传输 | ✅ done | v0.8 |
+| **限流/鉴权** | 接口限流、JWT Token | ✅ done (限流) / 🔲 pending (JWT) | v0.8 (限流) |
+| **Docker 部署** | Dockerfile + docker-compose 一键启动 | ✅ done | v0.8 |
 | **单元测试** | 核心模块测试覆盖 | 🔲 pending | — |
 
 ---
