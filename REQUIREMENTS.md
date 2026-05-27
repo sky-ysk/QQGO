@@ -253,6 +253,35 @@
 
 ---
 
+### v0.8 计划详情
+
+#### Batch 1：部署与安全基础 ✅
+
+- **Docker 部署：** `Dockerfile`（多阶段构建）+ `docker-compose.yml`（server + SQLite volume）
+- **TLS/SSL：** 服务端 `TLS_CERT`/`TLS_KEY` 配置，`wss://` 支持，自签证书脚本
+- **限流中间件：** 连接限流 (MAX_CONNECTIONS) + 消息频率限制 (MSG_RATE_LIMIT)
+- **Docker 验证：** 镜像构建、compose 启动、health 检查、数据持久化、TLS 端到端全部通过
+
+#### Batch 2：JWT Token 认证升级 🚧（设计完成，待实现）
+
+- **设计文档：** `docs/superpowers/specs/2026-05-27-jwt-auth-design.md`
+- **Access token：** JWT 格式，15分钟过期，HS256 签名，claims 包含 qq + exp
+- **Refresh token：** 随机字符串，7天过期，存 `users.refresh_token` 列
+- **旧 Token 兼容：** 直接失效，登录失败时提示重新密码登录（不强制迁移）
+- **新增消息类型：** `MsgTypeRefreshToken(107)`, `MsgTypeRefreshTokenAck(108)`
+- **客户端自动刷新：** 401 "token expired" 时自动发 refresh 请求，成功后重登录
+- **数据库变更：** `users` 表新增 `refresh_token` 列（VARCHAR(512)）
+- **新依赖：** `github.com/golang-jwt/jwt/v5`
+- **涉及文件：** `internal/service/jwt.go`（新增）、`chat.go`、`ws.go`、`message.go`、`user.go`、`config.go`、`cmd/client/`
+
+#### Batch 3：分布式基础设施（依赖 Batch 2 完成）
+
+- **Redis 在线状态：** Redis 缓存在线用户，TTL 心跳续期，掉线自动过期
+- **分布式消息路由：** NATS 或 Redis PubSub 实现跨实例消息转发
+- **数据库管理接口：** `/backup` 导出 SQLite、`/clean` 清理过期消息
+
+---
+
 ## P2 — 体验与架构
 
 | 需求 | 说明 | 状态 | 完成版本 |
@@ -270,7 +299,7 @@
 | 需求 | 说明 | 状态 | 完成版本 |
 |------|------|------|----------|
 | **TLS/SSL** | WebSocket 加密传输 | ✅ done | v0.8 |
-| **限流/鉴权** | 接口限流、JWT Token | ✅ done (限流) / 🔲 pending (JWT) | v0.8 (限流) |
+| **限流/鉴权** | 接口限流、JWT Token | ✅ done (限流) / 🚧 in progress (JWT 设计完成) | v0.8 (限流) / v0.8 (JWT) |
 | **Docker 部署** | Dockerfile + docker-compose 一键启动 | ✅ done | v0.8 |
 | **单元测试** | 核心模块测试覆盖 | 🔲 pending | — |
 

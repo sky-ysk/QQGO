@@ -540,15 +540,34 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 
 ---
 
-## 版本 0.8 — 2026-05-26 已完成
+## 版本 0.8 — 2026-05-26
 
-### Batch 1：部署与安全基础
+### Batch 1：部署与安全基础（✅ 已完成）
 
 | 功能 | 说明 | 状态 |
 |------|------|------|
 | **Docker 部署** | Dockerfile 多阶段构建 + docker-compose.yml | ✅ done |
 | **TLS/SSL** | wss:// 支持，自签证书脚本，客户端 wss 连接 | ✅ done |
 | **限流中间件** | 连接限流 (MAX_CONNECTIONS) + 消息频率限制 (MSG_RATE_LIMIT) | ✅ done |
+
+#### Docker 验证结果
+
+- 镜像构建：`qqgo-server:test` 构建成功
+- 容器启动：`docker compose up -d` 正常
+- Health 检查：`curl http://localhost:8080/health` → `ok`
+- 数据持久化：`data/qqgo.db` 在 down/up 后保留
+- TLS 端到端：`wss://` 服务端 + 客户端连接成功
+
+### Batch 2：JWT Token 认证升级（🚧 设计完成，待实现）
+
+| 功能 | 说明 | 状态 |
+|------|------|------|
+| **JWT Access Token** | JWT 格式，15分钟过期，HS256 签名 | 🚧 设计完成 |
+| **Refresh Token** | 随机字符串，7天过期，存 users 表 | 🚧 设计完成 |
+| **旧 Token 兼容** | 直接失效，提示重新密码登录 | 🚧 设计完成 |
+| **客户端自动刷新** | 401 时自动 refresh，对用户透明 | 🚧 设计完成 |
+
+设计文档：`docs/superpowers/specs/2026-05-27-jwt-auth-design.md`
 
 ### 新增环境变量
 
@@ -558,6 +577,9 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 | `TLS_KEY` | `""` | TLS 私钥文件路径 |
 | `SERVER_SCHEME` | `ws` | 客户端连接协议（ws/wss） |
 | `MSG_RATE_LIMIT` | `10` | 每用户每秒最大消息数 |
+| `JWT_SECRET` | 随机生成 | JWT 签名密钥（Batch 2 新增） |
+| `JWT_ACCESS_TTL` | `900` | Access token 过期秒数（Batch 2 新增） |
+| `JWT_REFRESH_TTL_DAYS` | `7` | Refresh token 过期天数（Batch 2 新增） |
 
 ---
 
@@ -597,4 +619,54 @@ Alice: /friends                 → [家人] ● QQ:10002 Bobby(Bob) [bob]
 | **P2** | v0.6+ | 数据库管理接口 | feature | 导出/备份/清理 |
 | **P3** | v0.7+ | 桌面端 GUI | feature | Wails 或 Fyne |
 | **P3** | v0.7+ | Protobuf 协议 | infra | 替换 JSON |
-| **P3** | v0.8+ | TLS / 限流 / Docker | infra | 生产就绪
+| **P3** | v0.8+ | TLS / 限流 / Docker | infra | 生产就绪 |
+| **P3** | v0.8 | JWT Token 认证 | infra | 🚧 设计完成，待实现 |
+
+---
+
+## 后续开发计划
+
+### v0.8 Batch 2：JWT Token 认证升级（当前进行中）
+
+**状态：** 设计完成，待实现
+**设计文档：** `docs/superpowers/specs/2026-05-27-jwt-auth-design.md`
+
+**核心变更：**
+- Access token (JWT, 15min, HS256) + Refresh token (随机串, 7d, 存 DB)
+- 旧 SHA256 token 直接失效，不迁移
+- 新增 `MsgTypeRefreshToken(107)` / `MsgTypeRefreshTokenAck(108)`
+- `users` 表新增 `refresh_token` 列
+- 客户端 401 自动 refresh，对用户透明
+
+**涉及文件：**
+- `internal/service/jwt.go`（新增）
+- `internal/service/chat.go`（Login/LoginWithToken 签名变更）
+- `internal/handler/ws.go`（handleLogin 修改，新增 handleRefreshToken）
+- `internal/model/message.go`（新增消息类型和结构体）
+- `internal/model/user.go`（新增 RefreshToken 字段）
+- `internal/config/config.go`（新增 JWT 配置）
+- `cmd/client/main.go`（启动流程、LoginAck 处理）
+- `cmd/client/localstore.go`（双 token 存储）
+
+**预估工作量：** 大
+
+### v0.8 Batch 3：分布式基础设施（依赖 Batch 2 完成）
+
+| 功能 | 说明 | 预估工作量 |
+|------|------|-----------|
+| **Redis 在线状态** | Redis 缓存在线用户（SET qq → conn_addr，TTL 心跳续期）；掉线自动过期 | 大 |
+| **分布式消息路由** | NATS 或 Redis PubSub 实现跨实例消息转发 | 大 |
+| **数据库管理接口** | `/backup` 导出 SQLite、`/clean` 清理过期消息（>30天） | 小 |
+
+### v0.9：Protobuf 协议（推迟）
+
+替换 JSON 为 Protobuf 涉及 20+ 消息类型定义、客户端/服务端双端适配、向后兼容策略。当前 JSON 协议功能完整不是瓶颈，改动量极大。
+
+### 未规划需求
+
+| 需求 | 优先级 | 备注 |
+|------|--------|------|
+| **历史消息查询** | P1 | 按时间/会话拉取历史记录 |
+| **会话搜索** | P1 | 在历史记录中按关键词搜索 |
+| **桌面端 GUI** | P3 | Wails 或 Fyne |
+| **单元测试覆盖** | P2 | 核心模块测试覆盖提升 |

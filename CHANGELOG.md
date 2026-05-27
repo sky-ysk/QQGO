@@ -4,7 +4,9 @@
 
 ## [v0.8] — 2026-05-26 / branch: `main`
 
-### Added
+### Batch 1 — 部署与安全基础（✅ 已完成，2026-05-26）
+
+#### Added
 - **Docker 部署：** `Dockerfile`（多阶段构建）+ `docker-compose.yml`（server + SQLite volume）；Redis/NATS 预留
 - **TLS/SSL：** 服务端支持 `TLS_CERT`/`TLS_KEY` 配置，有证书时启动 `wss://`，无时降级 `ws://`；自签证书生成脚本 `scripts/gen-cert.sh`
 - **客户端 wss 支持：** `SERVER_SCHEME` 环境变量配置连接协议（`ws`/`wss`）；自签证书 `InsecureSkipVerify`
@@ -13,11 +15,30 @@
 - **新依赖：** `golang.org/x/time`
 - **新文件：** `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `scripts/gen-cert.sh`, `internal/middleware/ratelimit.go`, `internal/middleware/ratelimit_test.go`, `internal/handler/ws_test.go`
 
-### Changed
+#### Changed
 - **internal/config：** 新增 `TLSCert`, `TLSKey`, `MsgRateLimit` 配置项
 - **cmd/server/main.go：** TLS 条件启动 + Hub 传入 maxConns 和 rateLimiter
 - **cmd/client/main.go：** 连接 URL 从硬编码改为环境变量配置
 - **internal/handler/ws.go：** Hub 新增 maxConns/rateLimiter 字段；ServeWS 连接限流；dispatch 消息限流；RemoveUser 清理限流器
+
+#### Verified (Docker)
+- Docker 镜像构建成功（`qqgo-server:test`）
+- `docker compose up -d` 启动正常
+- Health 检查：`curl http://localhost:8080/health` → `ok`
+- 数据持久化：`data/qqgo.db` 在 down/up 后保留
+- TLS 端到端：`wss://` 服务端 + 客户端连接成功
+- 单元测试：`go test ./internal/...` 全部通过
+
+### Batch 2 — JWT Token 认证升级（🚧 设计完成，待实现）
+
+#### Design (2026-05-27)
+- **设计文档：** `docs/superpowers/specs/2026-05-27-jwt-auth-design.md`
+- **架构：** Access token (JWT, 15min) + Refresh token (随机串, 7d, 存 DB)
+- **签名算法：** HS256 (HMAC-SHA256)
+- **旧 Token 兼容：** 直接失效，提示重新密码登录
+- **新增消息类型：** `MsgTypeRefreshToken(107)`, `MsgTypeRefreshTokenAck(108)`
+- **数据库变更：** `users` 表新增 `refresh_token` 列
+- **新依赖（计划）：** `github.com/golang-jwt/jwt/v5`
 
 ---
 
