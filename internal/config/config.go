@@ -10,6 +10,7 @@ type Config struct {
 	Server       ServerConfig
 	DBPath       string
 	Redis        RedisConfig
+	RedisEnabled bool
 	Postgres     PostgresConfig
 	NATS         NATSConfig
 	MsgRateLimit int
@@ -65,6 +66,7 @@ func Load() *Config {
 			Password: env("REDIS_PASSWORD", ""),
 			DB:       envInt("REDIS_DB", 0),
 		},
+		RedisEnabled: env("REDIS_ENABLED", "false") == "true",
 		Postgres: PostgresConfig{
 			DSN: env("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/qqgo?sslmode=disable"),
 		},
