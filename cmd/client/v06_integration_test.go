@@ -112,7 +112,7 @@ func (c *testClient) register(t *testing.T, password, nickname string) {
 	if loginResp.Code != 0 {
 		t.Fatalf("auto-login after register failed: %s", loginResp.Message)
 	}
-	c.token = loginResp.Token
+	c.token = loginResp.AccessToken
 	t.Logf("Registered: QQ=%d, nickname=%s", c.qq, c.nickname)
 }
 
@@ -135,7 +135,7 @@ func (c *testClient) login(t *testing.T, qq int64, password string) {
 	}
 	c.qq = loginResp.QQNumber
 	c.nickname = loginResp.Nickname
-	c.token = loginResp.Token
+	c.token = loginResp.AccessToken
 }
 
 func (c *testClient) loginWithToken(t *testing.T, qq int64, token string) {
@@ -157,7 +157,7 @@ func (c *testClient) loginWithToken(t *testing.T, qq int64, token string) {
 	}
 	c.qq = loginResp.QQNumber
 	c.nickname = loginResp.Nickname
-	c.token = loginResp.Token
+	c.token = loginResp.AccessToken
 }
 
 func (c *testClient) switchTo(t *testing.T, targetQQ int64) {
