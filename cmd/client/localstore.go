@@ -97,12 +97,61 @@ func loadToken(qq int64) (string, bool) {
 	return token, true
 }
 
+func saveAccessToken(qq int64, token string) {
+	if qq == 0 || token == "" {
+		return
+	}
+	ensureUserDir(qq)
+	path := filepath.Join(userDir(qq), "access_token")
+	if err := os.WriteFile(path, []byte(token), 0600); err != nil {
+		log.Printf("[localstore] save access_token error: %v", err)
+	}
+}
+
+func loadAccessToken(qq int64) (string, bool) {
+	path := filepath.Join(userDir(qq), "access_token")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+func saveRefreshToken(qq int64, token string) {
+	if qq == 0 || token == "" {
+		return
+	}
+	ensureUserDir(qq)
+	path := filepath.Join(userDir(qq), "refresh_token")
+	if err := os.WriteFile(path, []byte(token), 0600); err != nil {
+		log.Printf("[localstore] save refresh_token error: %v", err)
+	}
+}
+
+func loadRefreshToken(qq int64) (string, bool) {
+	path := filepath.Join(userDir(qq), "refresh_token")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
 func removeToken(qq int64) {
 	if qq == 0 {
 		return
 	}
-	path := filepath.Join(userDir(qq), "token")
-	os.Remove(path)
+	os.Remove(filepath.Join(userDir(qq), "token"))
+	os.Remove(filepath.Join(userDir(qq), "access_token"))
+	os.Remove(filepath.Join(userDir(qq), "refresh_token"))
 }
 
 func findSavedQQ() (int64, bool) {
@@ -118,6 +167,10 @@ func findSavedQQ() (int64, bool) {
 		qq, err := strconv.ParseInt(entry.Name(), 10, 64)
 		if err != nil {
 			continue
+		}
+		accessTokenPath := filepath.Join(dataDir, entry.Name(), "access_token")
+		if _, err := os.Stat(accessTokenPath); err == nil {
+			return qq, true
 		}
 		tokenPath := filepath.Join(dataDir, entry.Name(), "token")
 		if _, err := os.Stat(tokenPath); err == nil {
