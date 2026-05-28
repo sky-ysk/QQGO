@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/redis/go-redis/v9 v9.20.0
 	golang.org/x/crypto v0.51.0
 	golang.org/x/time v0.15.0
 	gorm.io/driver/sqlite v1.6.0
@@ -16,7 +17,6 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
-	github.com/redis/go-redis/v9 v9.20.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
