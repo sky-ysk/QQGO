@@ -13,6 +13,13 @@ type Config struct {
 	Postgres     PostgresConfig
 	NATS         NATSConfig
 	MsgRateLimit int
+	JWT          JWTConfig
+}
+
+type JWTConfig struct {
+	Secret         string
+	AccessTTL      int
+	RefreshTTLDays int
 }
 
 type ServerConfig struct {
@@ -65,6 +72,11 @@ func Load() *Config {
 			URL: env("NATS_URL", "nats://localhost:4222"),
 		},
 		MsgRateLimit: envInt("MSG_RATE_LIMIT", 10),
+		JWT: JWTConfig{
+			Secret:         env("JWT_SECRET", ""),
+			AccessTTL:      envInt("JWT_ACCESS_TTL", 900),
+			RefreshTTLDays: envInt("JWT_REFRESH_TTL_DAYS", 7),
+		},
 	}
 }
 
