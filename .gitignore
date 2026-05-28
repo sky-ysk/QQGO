@@ -1,2 +1,4 @@
 qqgo.db
-data/
+DATA/
+client
+server
