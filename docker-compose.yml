@@ -11,8 +11,12 @@ services:
       - DB_PATH=/data/qqgo.db
       - MAX_CONNECTIONS=10000
       - MSG_RATE_LIMIT=10
+      - REDIS_ENABLED=true
+      - REDIS_ADDR=redis:6379
       # - TLS_CERT=/app/certs/server.crt
       # - TLS_KEY=/app/certs/server.key
+    depends_on:
+      - redis
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
       interval: 10s
@@ -20,24 +24,14 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # --- Batch 3: Uncomment for Redis ---
-  # redis:
-  #   image: redis:7-alpine
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   command: redis-server --save 60 1 --loglevel warning
-  #   restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    restart: unless-stopped
 
-  # --- Batch 3: Uncomment for NATS ---
-  # nats:
-  #   image: nats:2-alpine
-  #   ports:
-  #     - "4222:4222"
-  #     - "8222:8222"
-  #   command: "--jetstream"
-  #   restart: unless-stopped
-
-# volumes:
-#   redis_data:
+volumes:
+  redis_data:
