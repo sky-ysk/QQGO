@@ -18,8 +18,10 @@ func (m *mockService) ValidateToken(qq int64, token string) (bool, error)       
 func (m *mockService) GetOfflineMessages(qq int64) ([]*model.Message, error)                 { return nil, nil }
 func (m *mockService) MarkDelivered(messageID int64) error                                   { return nil }
 func (m *mockService) Register(nickname, password string) (int64, error)                     { return 0, nil }
-func (m *mockService) Login(qq int64, password string) (string, error)                       { return "", nil }
+func (m *mockService) Login(qq int64, password string) (string, string, error)               { return "access", "refresh", nil }
 func (m *mockService) LoginWithToken(qq int64, token string) (bool, error)                   { return true, nil }
+func (m *mockService) RefreshToken(qq int64, refreshToken string) (string, error)            { return "new-access", nil }
+func (m *mockService) ClearRefreshToken(qq int64) error                                      { return nil }
 func (m *mockService) SendFriendRequest(fromQQ, toQQ int64, message string) error            { return nil }
 func (m *mockService) AcceptFriend(qq, fromQQ int64) error                                   { return nil }
 func (m *mockService) RejectFriend(qq, fromQQ int64) error                                   { return nil }
@@ -54,7 +56,7 @@ func (m *mockService) GetSessions(qq int64, onlineFunc func(int64) bool) ([]mode
 func (m *mockService) GetGroupHistory(groupID string, offset, limit int) ([]*model.Message, bool, error) {
 	return nil, false, nil
 }
-func (m *mockService) ChangePassword(qq int64, oldPw, newPw string) (string, error)          { return "", nil }
+func (m *mockService) ChangePassword(qq int64, oldPw, newPw string) (string, string, error)  { return "access", "refresh", nil }
 func (m *mockService) BlockUser(qq, blockedQQ int64) error                                   { return nil }
 func (m *mockService) UnblockUser(qq, blockedQQ int64) error                                 { return nil }
 func (m *mockService) IsBlocked(qq, blockedQQ int64) bool                                    { return false }

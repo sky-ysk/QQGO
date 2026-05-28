@@ -344,7 +344,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			return true
 		}
 		removeToken(myQQNumber)
-		fmt.Printf("[cmd] logged out QQ:%d, token cleared\n", myQQNumber)
+		fmt.Printf("[cmd] logged out QQ:%d, tokens cleared\n", myQQNumber)
 		myQQNumber = 0
 		myNickname = ""
 		currentQQ = 0
@@ -716,8 +716,21 @@ func main() {
 	prompt()
 
 	if savedQQ, ok := findSavedQQ(); ok {
-		if token, tokOk := loadToken(savedQQ); tokOk {
-			fmt.Printf("[cmd] found saved token for QQ:%d, auto-login...\n", savedQQ)
+		if accessToken, tokOk := loadAccessToken(savedQQ); tokOk {
+			fmt.Printf("[cmd] found saved access_token for QQ:%d, auto-login...\n", savedQQ)
+			pendingLoginQQ = savedQQ
+			payload, _ := json.Marshal(&model.LoginRequest{
+				QQ:       savedQQ,
+				Token:    accessToken,
+				Platform: "cli",
+			})
+			autoMsg, _ := json.Marshal(&model.Message{
+				MsgType: model.MsgTypeLogin,
+				Content: string(payload),
+			})
+			conn.WriteMessage(websocket.TextMessage, autoMsg)
+		} else if token, tokOk := loadToken(savedQQ); tokOk {
+			fmt.Printf("[cmd] found old token for QQ:%d, trying login...\n", savedQQ)
 			pendingLoginQQ = savedQQ
 			payload, _ := json.Marshal(&model.LoginRequest{
 				QQ:       savedQQ,
@@ -766,17 +779,63 @@ func main() {
 						}
 						myQQNumber = resp.QQNumber
 						myNickname = resp.Nickname
-						if resp.Token != "" {
-							saveToken(myQQNumber, resp.Token)
+						if resp.AccessToken != "" {
+							saveAccessToken(myQQNumber, resp.AccessToken)
+						}
+						if resp.RefreshToken != "" {
+							saveRefreshToken(myQQNumber, resp.RefreshToken)
 						}
 						fmt.Printf("\033[2K\r[Server]: login ok, %s(QQ:%d), online=%d\n> ", myNickname, myQQNumber, resp.Online)
 					} else {
-						if pendingLoginQQ != 0 && resp.Message == "auth failed" {
-							removeToken(pendingLoginQQ)
-							fmt.Printf("\033[2K\r[Server]: token expired for QQ:%d, please login with password\n> ", pendingLoginQQ)
+						if pendingLoginQQ != 0 {
+							if resp.Message == "token expired" {
+								if refreshToken, ok := loadRefreshToken(pendingLoginQQ); ok {
+									fmt.Printf("\033[2K\r[Server]: access token expired, refreshing...\n> ")
+									payload, _ := json.Marshal(&model.RefreshTokenRequest{
+										QQ:           pendingLoginQQ,
+										RefreshToken: refreshToken,
+									})
+									refreshMsg, _ := json.Marshal(&model.Message{
+										MsgType: model.MsgTypeRefreshToken,
+										Content: string(payload),
+									})
+									conn.WriteMessage(websocket.TextMessage, refreshMsg)
+									return
+								}
+								removeToken(pendingLoginQQ)
+								fmt.Printf("\033[2K\r[Server]: refresh token also expired for QQ:%d, please login with password\n> ", pendingLoginQQ)
+							} else if resp.Message == "auth failed" {
+								removeToken(pendingLoginQQ)
+								fmt.Printf("\033[2K\r[Server]: token invalid for QQ:%d, please login with password\n> ", pendingLoginQQ)
+							} else {
+								fmt.Printf("\033[2K\r[Server]: login failed - %s\n> ", resp.Message)
+							}
 						} else {
 							fmt.Printf("\033[2K\r[Server]: login failed - %s\n> ", resp.Message)
 						}
+						pendingLoginQQ = 0
+					}
+				}
+
+			case model.MsgTypeRefreshTokenAck:
+				var refreshResp model.RefreshTokenResponse
+				if err := json.Unmarshal([]byte(msg.Content), &refreshResp); err == nil {
+					if refreshResp.Code == 0 {
+						saveAccessToken(pendingLoginQQ, refreshResp.AccessToken)
+						fmt.Printf("\033[2K\r[Server]: token refreshed, re-login...\n> ")
+						payload, _ := json.Marshal(&model.LoginRequest{
+							QQ:       pendingLoginQQ,
+							Token:    refreshResp.AccessToken,
+							Platform: "cli",
+						})
+						loginMsg, _ := json.Marshal(&model.Message{
+							MsgType: model.MsgTypeLogin,
+							Content: string(payload),
+						})
+						conn.WriteMessage(websocket.TextMessage, loginMsg)
+					} else {
+						removeToken(pendingLoginQQ)
+						fmt.Printf("\033[2K\r[Server]: refresh failed - %s, please login with password\n> ", refreshResp.Message)
 						pendingLoginQQ = 0
 					}
 				}
@@ -998,8 +1057,11 @@ func main() {
 				var resp model.ChangePasswordResponse
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
 					if resp.Code == 0 {
-						if resp.Token != "" {
-							saveToken(myQQNumber, resp.Token)
+						if resp.AccessToken != "" {
+							saveAccessToken(myQQNumber, resp.AccessToken)
+						}
+						if resp.RefreshToken != "" {
+							saveRefreshToken(myQQNumber, resp.RefreshToken)
 						}
 						fmt.Printf("\033[2K\r[Server]: password changed successfully\n> ")
 					} else {

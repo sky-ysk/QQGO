@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/qqgo/server/internal/model"
+	"github.com/qqgo/server/internal/service"
 	ws "github.com/qqgo/server/pkg/websocket"
 )
 
@@ -40,8 +41,10 @@ type Service interface {
 	GetOfflineMessages(qq int64) ([]*model.Message, error)
 	MarkDelivered(messageID int64) error
 	Register(nickname, password string) (int64, error)
-	Login(qq int64, password string) (string, error)
+	Login(qq int64, password string) (string, string, error)
 	LoginWithToken(qq int64, token string) (bool, error)
+	RefreshToken(qq int64, refreshToken string) (string, error)
+	ClearRefreshToken(qq int64) error
 
 	SendFriendRequest(fromQQ int64, toQQ int64, message string) error
 	AcceptFriend(qq int64, fromQQ int64) error
@@ -67,7 +70,7 @@ type Service interface {
 	IsGroupMember(groupID string, qq int64) bool
 	GetSessions(qq int64, onlineFunc func(int64) bool) ([]model.SessionInfo, error)
 	GetGroupHistory(groupID string, offset int, limit int) ([]*model.Message, bool, error)
-	ChangePassword(qq int64, oldPassword, newPassword string) (string, error)
+	ChangePassword(qq int64, oldPassword, newPassword string) (string, string, error)
 	BlockUser(qq int64, blockedQQ int64) error
 	UnblockUser(qq int64, blockedQQ int64) error
 	IsBlocked(qq int64, blockedQQ int64) bool
@@ -157,6 +160,8 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleLogin(c, &msg)
 	case model.MsgTypeRegister:
 		h.handleRegister(c, &msg)
+	case model.MsgTypeRefreshToken:
+		h.handleRefreshToken(c, &msg)
 	case model.MsgTypeHeartbeat:
 		h.handleHeartbeat(c)
 	case model.MsgTypeDelivered:
@@ -237,7 +242,7 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 	log.Printf("[register] success qq=%d", qqNumber)
 	h.writeRegisterAck(c, &model.RegisterResponse{Code: 0, Message: "register ok", QQNumber: qqNumber}, qqNumber)
 
-	token, err := h.svc.Login(qqNumber, req.Password)
+	accessToken, refreshToken, err := h.svc.Login(qqNumber, req.Password)
 	if err != nil {
 		log.Printf("[register] auto-login failed for qq=%d: %v", qqNumber, err)
 		return
@@ -252,7 +257,7 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 	h.conns[qqNumber] = c
 	h.mu.Unlock()
 
-	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: qqNumber, Nickname: req.Nickname})
+	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken, Online: h.Count(), QQNumber: qqNumber, Nickname: req.Nickname})
 
 	if h.onStatus != nil {
 		h.onStatus(qqNumber, true)
@@ -279,7 +284,7 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 	log.Printf("[login] attempting qq=%d", req.QQ)
 
 	if req.Password != "" {
-		token, err := h.svc.Login(req.QQ, req.Password)
+		accessToken, refreshToken, err := h.svc.Login(req.QQ, req.Password)
 		if err != nil {
 			log.Printf("[login] auth failed for qq=%d: %v", req.QQ, err)
 			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: "auth failed"})
@@ -301,7 +306,7 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
+		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
 
 		if h.onStatus != nil {
 			h.onStatus(req.QQ, true)
@@ -315,7 +320,11 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 	if req.Token != "" {
 		valid, err := h.svc.LoginWithToken(req.QQ, req.Token)
 		if err != nil || !valid {
-			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: "auth failed"})
+			msg := "auth failed"
+			if err == service.ErrTokenExpired {
+				msg = "token expired"
+			}
+			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: msg})
 			return
 		}
 
@@ -334,7 +343,7 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", Token: req.Token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
+		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: req.Token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
 
 		if h.onStatus != nil {
 			h.onStatus(req.QQ, true)
@@ -346,6 +355,36 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 	}
 
 	h.writeLoginAck(c, &model.LoginResponse{Code: 400, Message: "password or token required"})
+}
+
+func (h *Hub) handleRefreshToken(c *ws.Conn, msg *model.Message) {
+	var req model.RefreshTokenRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeRefreshTokenAck(c, &model.RefreshTokenResponse{Code: 400, Message: "invalid payload"})
+		return
+	}
+
+	newAccessToken, err := h.svc.RefreshToken(req.QQ, req.RefreshToken)
+	if err != nil {
+		msg := "refresh token expired"
+		if err == service.ErrInvalidToken {
+			msg = "auth failed"
+		}
+		h.writeRefreshTokenAck(c, &model.RefreshTokenResponse{Code: 401, Message: msg})
+		return
+	}
+
+	h.writeRefreshTokenAck(c, &model.RefreshTokenResponse{
+		Code: 0, Message: "ok", AccessToken: newAccessToken,
+	})
+}
+
+func (h *Hub) writeRefreshTokenAck(c *ws.Conn, resp *model.RefreshTokenResponse) {
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeRefreshTokenAck,
+		Content: string(payload),
+	})
 }
 
 func (h *Hub) writeLoginAck(c *ws.Conn, resp *model.LoginResponse) {
@@ -1198,7 +1237,7 @@ func (h *Hub) handleChangePassword(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	newToken, err := h.svc.ChangePassword(c.QQ, req.OldPassword, req.NewPassword)
+	accessToken, refreshToken, err := h.svc.ChangePassword(c.QQ, req.OldPassword, req.NewPassword)
 	if err != nil {
 		h.writeFriendError(c, err.Error())
 		return
@@ -1206,9 +1245,10 @@ func (h *Hub) handleChangePassword(c *ws.Conn, msg *model.Message) {
 
 	log.Printf("[changepw] qq=%d changed password", c.QQ)
 	payload, _ := json.Marshal(&model.ChangePasswordResponse{
-		Code:    0,
-		Message: "password changed",
-		Token:   newToken,
+		Code:         0,
+		Message:      "password changed",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
 	})
 	c.WriteJSON(&model.Message{
 		MsgType: model.MsgTypeChangePasswordAck,

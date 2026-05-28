@@ -19,6 +19,7 @@ import (
 
 func main() {
 	cfg := config.Load()
+	service.InitJWT(cfg.JWT)
 
 	db, err := store.InitDB(cfg.DBPath)
 	if err != nil {

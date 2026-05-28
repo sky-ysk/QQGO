@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -45,11 +42,8 @@ func (s *ChatService) Register(nickname, password string) (int64, error) {
 		return 0, err
 	}
 
-	token := generateToken()
-
 	user := &model.User{
 		PasswordHash: string(hash),
-		Token:        token,
 		Nickname:     nickname,
 	}
 	if err := s.db.Create(user).Error; err != nil {
@@ -57,36 +51,59 @@ func (s *ChatService) Register(nickname, password string) (int64, error) {
 	}
 
 	qqNumber := int64(model.QQNumberBase) + int64(user.ID)
-	s.db.Model(user).Updates(map[string]interface{}{
-		"qq_number": qqNumber,
-		"token":     token,
-	})
+	s.db.Model(user).Update("qq_number", qqNumber)
 
 	return qqNumber, nil
 }
 
-func (s *ChatService) Login(qq int64, password string) (string, error) {
+func (s *ChatService) Login(qq int64, password string) (accessToken, refreshToken string, err error) {
 	var user model.User
 	if err := s.db.Where("qq_number = ?", qq).First(&user).Error; err != nil {
-		return "", ErrUserNotFound
+		return "", "", ErrUserNotFound
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", ErrAuthFailed
+		return "", "", ErrAuthFailed
 	}
 
-	token := generateToken()
-	s.db.Model(&user).Update("token", token)
+	accessTok, err := GenerateAccessToken(qq)
+	if err != nil {
+		return "", "", err
+	}
 
-	return token, nil
+	refreshTok := GenerateRefreshToken()
+	s.db.Model(&user).Updates(map[string]interface{}{
+		"refresh_token": refreshTok,
+		"token":         "",
+	})
+
+	return accessTok, refreshTok, nil
 }
 
 func (s *ChatService) LoginWithToken(qq int64, token string) (bool, error) {
-	var user model.User
-	if err := s.db.Where("qq_number = ? AND token = ?", qq, token).First(&user).Error; err != nil {
-		return false, nil
+	parsedQQ, err := ValidateAccessToken(token)
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	return parsedQQ == qq, nil
+}
+
+func (s *ChatService) RefreshToken(qq int64, refreshToken string) (string, error) {
+	var user model.User
+	if err := s.db.Where("qq_number = ? AND refresh_token = ?", qq, refreshToken).First(&user).Error; err != nil {
+		return "", ErrInvalidToken
+	}
+
+	ttlDays := GetRefreshTTLDays()
+	if time.Since(user.UpdatedAt) > time.Duration(ttlDays)*24*time.Hour {
+		return "", ErrTokenExpired
+	}
+
+	return GenerateAccessToken(qq)
+}
+
+func (s *ChatService) ClearRefreshToken(qq int64) error {
+	return s.db.Model(&model.User{}).Where("qq_number = ?", qq).Update("refresh_token", "").Error
 }
 
 func (s *ChatService) ValidateToken(qq int64, token string) (bool, error) {
@@ -756,28 +773,34 @@ func (s *ChatService) GetSessions(qq int64, onlineFunc func(int64) bool) ([]mode
 	return sessions, nil
 }
 
-func (s *ChatService) ChangePassword(qq int64, oldPassword, newPassword string) (string, error) {
+func (s *ChatService) ChangePassword(qq int64, oldPassword, newPassword string) (accessToken, refreshToken string, err error) {
 	var user model.User
 	if err := s.db.Where("qq_number = ?", qq).First(&user).Error; err != nil {
-		return "", ErrUserNotFound
+		return "", "", ErrUserNotFound
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
-		return "", ErrAuthFailed
+		return "", "", ErrAuthFailed
 	}
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	newToken := generateToken()
+	accessTok, err := GenerateAccessToken(qq)
+	if err != nil {
+		return "", "", err
+	}
+
+	refreshTok := GenerateRefreshToken()
 	s.db.Model(&user).Updates(map[string]interface{}{
 		"password_hash": string(newHash),
-		"token":         newToken,
+		"refresh_token": refreshTok,
+		"token":         "",
 	})
 
-	return newToken, nil
+	return accessTok, refreshTok, nil
 }
 
 func (s *ChatService) BlockUser(qq int64, blockedQQ int64) error {
@@ -833,9 +856,3 @@ func (s *ChatService) GetBlacklist(qq int64) ([]model.BlockedUserInfo, error) {
 	return result, nil
 }
 
-func generateToken() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
