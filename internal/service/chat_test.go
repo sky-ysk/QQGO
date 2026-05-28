@@ -3,7 +3,9 @@ package service
 import (
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/qqgo/server/internal/config"
 	"github.com/qqgo/server/internal/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -30,6 +32,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
+
+	InitJWT(config.JWTConfig{Secret: "test-secret", AccessTTL: 900, RefreshTTLDays: 7})
 
 	return db
 }
@@ -555,20 +559,23 @@ func TestChangePassword(t *testing.T) {
 		t.Fatalf("register failed: %v", err)
 	}
 
-	newToken, err := svc.ChangePassword(qq, "oldpassword", "newpassword")
+	accessTok, refreshTok, err := svc.ChangePassword(qq, "oldpassword", "newpassword")
 	if err != nil {
 		t.Fatalf("change password failed: %v", err)
 	}
-	if newToken == "" {
-		t.Fatal("new token should not be empty")
+	if accessTok == "" {
+		t.Fatal("new access token should not be empty")
+	}
+	if refreshTok == "" {
+		t.Fatal("new refresh token should not be empty")
 	}
 
-	_, err = svc.Login(qq, "newpassword")
+	_, _, err = svc.Login(qq, "newpassword")
 	if err != nil {
 		t.Fatalf("login with new password should succeed: %v", err)
 	}
 
-	_, err = svc.Login(qq, "oldpassword")
+	_, _, err = svc.Login(qq, "oldpassword")
 	if err != ErrAuthFailed {
 		t.Fatalf("login with old password should fail, got: %v", err)
 	}
@@ -580,7 +587,7 @@ func TestChangePasswordWrongOld(t *testing.T) {
 
 	qq, _ := svc.Register("bob", "correctpassword")
 
-	_, err := svc.ChangePassword(qq, "wrongpassword", "newpassword")
+	_, _, err := svc.ChangePassword(qq, "wrongpassword", "newpassword")
 	if err != ErrAuthFailed {
 		t.Fatalf("should fail with wrong old password, got: %v", err)
 	}
@@ -807,5 +814,130 @@ func TestRecalledMessageNotInHistory(t *testing.T) {
 	}
 	if msgs[0].Content != "msg2" {
 		t.Fatalf("expected msg2, got %s", msgs[0].Content)
+	}
+}
+
+func TestLoginReturnsDualToken(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq, _ := svc.Register("alice", "password123")
+
+	accessTok, refreshTok, err := svc.Login(qq, "password123")
+	if err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	if accessTok == "" {
+		t.Fatal("access token should not be empty")
+	}
+	if refreshTok == "" {
+		t.Fatal("refresh token should not be empty")
+	}
+
+	parsedQQ, err := ValidateAccessToken(accessTok)
+	if err != nil {
+		t.Fatalf("validate access token failed: %v", err)
+	}
+	if parsedQQ != qq {
+		t.Fatalf("expected qq %d, got %d", qq, parsedQQ)
+	}
+}
+
+func TestLoginWithTokenJWT(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq, _ := svc.Register("alice", "password123")
+	accessTok, _, _ := svc.Login(qq, "password123")
+
+	valid, err := svc.LoginWithToken(qq, accessTok)
+	if err != nil {
+		t.Fatalf("login with jwt token failed: %v", err)
+	}
+	if !valid {
+		t.Fatal("should be valid")
+	}
+
+	valid, err = svc.LoginWithToken(qq+1, accessTok)
+	if err != nil || valid {
+		t.Fatal("should be invalid for wrong qq")
+	}
+
+	valid, err = svc.LoginWithToken(qq, "old_sha256_token_abc123")
+	if err == nil && valid {
+		t.Fatal("old SHA256 token should fail")
+	}
+}
+
+func TestRefreshToken(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq, _ := svc.Register("alice", "password123")
+	_, refreshTok, _ := svc.Login(qq, "password123")
+
+	newAccessTok, err := svc.RefreshToken(qq, refreshTok)
+	if err != nil {
+		t.Fatalf("refresh failed: %v", err)
+	}
+	if newAccessTok == "" {
+		t.Fatal("new access token should not be empty")
+	}
+
+	parsedQQ, err := ValidateAccessToken(newAccessTok)
+	if err != nil {
+		t.Fatalf("validate new access token failed: %v", err)
+	}
+	if parsedQQ != qq {
+		t.Fatalf("expected qq %d, got %d", qq, parsedQQ)
+	}
+}
+
+func TestRefreshTokenInvalid(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq, _ := svc.Register("alice", "password123")
+
+	_, err := svc.RefreshToken(qq, "wrong_refresh_token")
+	if err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken, got: %v", err)
+	}
+}
+
+func TestRefreshTokenExpired(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq, _ := svc.Register("alice", "password123")
+	_, refreshTok, _ := svc.Login(qq, "password123")
+
+	var user model.User
+	db.Where("qq_number = ?", qq).First(&user)
+	db.Model(&user).Update("updated_at", time.Now().Add(-8*24*time.Hour))
+
+	_, err := svc.RefreshToken(qq, refreshTok)
+	if err != ErrTokenExpired {
+		t.Fatalf("expected ErrTokenExpired, got: %v", err)
+	}
+}
+
+func TestClearRefreshToken(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq, _ := svc.Register("alice", "password123")
+	_, refreshTok, _ := svc.Login(qq, "password123")
+
+	if refreshTok == "" {
+		t.Fatal("refresh token should exist")
+	}
+
+	svc.ClearRefreshToken(qq)
+
+	var user model.User
+	db.Where("qq_number = ?", qq).First(&user)
+	if user.RefreshToken != "" {
+		t.Fatal("refresh token should be cleared")
 	}
 }
