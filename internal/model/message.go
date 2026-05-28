@@ -18,8 +18,10 @@ const (
 	MsgTypeStatusChange     MessageType = 104
 	MsgTypeRegister         MessageType = 105
 	MsgTypeRegisterAck      MessageType = 106
-	MsgTypeServerAck        MessageType = 107
-	MsgTypeDelivered        MessageType = 108
+	MsgTypeRefreshToken     MessageType = 107
+	MsgTypeRefreshTokenAck  MessageType = 108
+	MsgTypeServerAck        MessageType = 109
+	MsgTypeDelivered        MessageType = 110
 	MsgTypeFriendRequest    MessageType = 300
 	MsgTypeFriendAccept     MessageType = 301
 	MsgTypeFriendReject     MessageType = 302
@@ -79,12 +81,24 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Code     int    `json:"code"`
-	Message  string `json:"message"`
-	Token    string `json:"token,omitempty"`
-	Online   int    `json:"online"`
-	QQNumber int64  `json:"qq_number,omitempty"`
-	Nickname string `json:"nickname,omitempty"`
+	Code         int    `json:"code"`
+	Message      string `json:"message"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Online       int    `json:"online"`
+	QQNumber     int64  `json:"qq_number,omitempty"`
+	Nickname     string `json:"nickname,omitempty"`
+}
+
+type RefreshTokenRequest struct {
+	QQ           int64  `json:"qq"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type RefreshTokenResponse struct {
+	Code        int    `json:"code"`
+	Message     string `json:"message"`
+	AccessToken string `json:"access_token,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -223,9 +237,10 @@ type ChangePasswordRequest struct {
 }
 
 type ChangePasswordResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Token   string `json:"token,omitempty"`
+	Code         int    `json:"code"`
+	Message      string `json:"message"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
 type BlockedUserInfo struct {

@@ -9,6 +9,7 @@ type User struct {
 	QQNumber     int64     `gorm:"uniqueIndex;not null" json:"qq_number"`
 	PasswordHash string    `gorm:"size:128;not null" json:"-"`
 	Token        string    `gorm:"size:128" json:"-"`
+	RefreshToken string    `gorm:"size:512" json:"-"`
 	Nickname     string    `gorm:"size:64" json:"nickname"`
 	Avatar       string    `gorm:"size:256" json:"avatar"`
 	Status       int       `gorm:"default:0" json:"status"`
