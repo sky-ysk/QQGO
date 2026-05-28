@@ -66,7 +66,7 @@ func (m *mockService) RecallMessage(qq, messageID int64) error                  
 
 func TestConnectionLimit(t *testing.T) {
 	svc := &mockService{}
-	hub := NewHub(svc, nil, 2, nil)
+	hub := NewHub(svc, nil, 2, nil, nil, nil, "")
 
 	hub.conns[10001] = &ws.Conn{}
 	hub.conns[10002] = &ws.Conn{}

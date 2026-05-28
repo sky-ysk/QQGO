@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -33,6 +34,19 @@ type Hub struct {
 		Allow(qq int64) bool
 		Remove(qq int64)
 	}
+	onlineTracker interface {
+		SetOnline(qq int64)
+		SetOffline(qq int64)
+		RefreshOnline(qq int64)
+		GetInstance(qq int64) (string, bool)
+	}
+	pubsubRouter interface {
+		Subscribe(channels ...string)
+		Unsubscribe(channels ...string)
+		PublishToUser(qq int64, msg *model.Message)
+		PublishToGroup(groupID string, msg *model.Message)
+	}
+	instanceID string
 }
 
 type Service interface {
@@ -82,15 +96,37 @@ type Service interface {
 func NewHub(svc Service, onStatus func(int64, bool), maxConns int, rl interface {
 	Allow(qq int64) bool
 	Remove(qq int64)
-}) *Hub {
+}, online interface {
+	SetOnline(qq int64)
+	SetOffline(qq int64)
+	RefreshOnline(qq int64)
+	GetInstance(qq int64) (string, bool)
+}, ps interface {
+	Subscribe(channels ...string)
+	Unsubscribe(channels ...string)
+	PublishToUser(qq int64, msg *model.Message)
+	PublishToGroup(groupID string, msg *model.Message)
+}, instanceID string) *Hub {
 	return &Hub{
-		conns:       make(map[int64]*ws.Conn),
-		groups:      make(map[string]map[string]bool),
-		svc:         svc,
-		onStatus:    onStatus,
-		maxConns:    maxConns,
-		rateLimiter: rl,
+		conns:         make(map[int64]*ws.Conn),
+		groups:        make(map[string]map[string]bool),
+		svc:           svc,
+		onStatus:      onStatus,
+		maxConns:      maxConns,
+		rateLimiter:   rl,
+		onlineTracker: online,
+		pubsubRouter:  ps,
+		instanceID:    instanceID,
 	}
+}
+
+func (h *Hub) SetPubSubRouter(ps interface {
+	Subscribe(channels ...string)
+	Unsubscribe(channels ...string)
+	PublishToUser(qq int64, msg *model.Message)
+	PublishToGroup(groupID string, msg *model.Message)
+}) {
+	h.pubsubRouter = ps
 }
 
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +293,13 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 	h.conns[qqNumber] = c
 	h.mu.Unlock()
 
+	if h.onlineTracker != nil {
+		h.onlineTracker.SetOnline(qqNumber)
+	}
+	if h.pubsubRouter != nil {
+		h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", qqNumber))
+	}
+
 	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken, Online: h.Count(), QQNumber: qqNumber, Nickname: req.Nickname})
 
 	if h.onStatus != nil {
@@ -306,6 +349,13 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		h.conns[req.QQ] = c
 		h.mu.Unlock()
 
+		if h.onlineTracker != nil {
+			h.onlineTracker.SetOnline(req.QQ)
+		}
+		if h.pubsubRouter != nil {
+			h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", req.QQ))
+		}
+
 		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
 
 		if h.onStatus != nil {
@@ -342,6 +392,13 @@ func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
 		c.Platform = req.Platform
 		h.conns[req.QQ] = c
 		h.mu.Unlock()
+
+		if h.onlineTracker != nil {
+			h.onlineTracker.SetOnline(req.QQ)
+		}
+		if h.pubsubRouter != nil {
+			h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", req.QQ))
+		}
 
 		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: req.Token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
 
@@ -400,6 +457,9 @@ func (h *Hub) handleHeartbeat(c *ws.Conn) {
 		MsgType: model.MsgTypeHeartbeat,
 		Content: "pong",
 	})
+	if c.QQ != 0 && h.onlineTracker != nil {
+		h.onlineTracker.RefreshOnline(c.QQ)
+	}
 }
 
 func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
@@ -1130,17 +1190,28 @@ func (h *Hub) sendToUser(qq int64, msg *model.Message) {
 	conn, ok := h.conns[qq]
 	h.mu.RUnlock()
 
-	if !ok {
-		log.Printf("[send] target user qq=%d offline, saved to DB for later delivery", qq)
+	if ok {
+		if err := conn.WriteJSON(msg); err != nil {
+			log.Printf("[send] write to qq=%d error: %v", qq, err)
+		}
 		return
 	}
 
-	if err := conn.WriteJSON(msg); err != nil {
-		log.Printf("[send] write to qq=%d error: %v", qq, err)
+	if h.pubsubRouter != nil && h.onlineTracker != nil {
+		if instanceID, online := h.onlineTracker.GetInstance(qq); online && instanceID != h.instanceID {
+			h.pubsubRouter.PublishToUser(qq, msg)
+			return
+		}
 	}
+
+	log.Printf("[send] target user qq=%d offline, saved to DB for later delivery", qq)
 }
 
 func (h *Hub) broadcastToGroup(msg *model.Message) {
+	if h.pubsubRouter != nil && msg.GroupID != "" {
+		h.pubsubRouter.PublishToGroup(msg.GroupID, msg)
+	}
+
 	members, err := h.svc.GetGroupMembers(msg.GroupID)
 	if err != nil {
 		return
@@ -1148,7 +1219,12 @@ func (h *Hub) broadcastToGroup(msg *model.Message) {
 
 	for _, qq := range members {
 		if qq != msg.FromQQ {
-			h.sendToUser(qq, msg)
+			h.mu.RLock()
+			conn, ok := h.conns[qq]
+			h.mu.RUnlock()
+			if ok {
+				conn.WriteJSON(msg)
+			}
 		}
 	}
 }
@@ -1167,6 +1243,13 @@ func (h *Hub) RemoveUser(qq int64) {
 		if len(members) == 0 {
 			delete(h.groups, gid)
 		}
+	}
+
+	if h.onlineTracker != nil {
+		h.onlineTracker.SetOffline(qq)
+	}
+	if h.pubsubRouter != nil {
+		h.pubsubRouter.Unsubscribe(fmt.Sprintf("ch:qq:%d", qq))
 	}
 
 	if h.onStatus != nil {
@@ -1370,4 +1453,36 @@ func (h *Hub) handleRecall(c *ws.Conn, msg *model.Message) {
 			}
 		}
 	}
+}
+
+func (h *Hub) handlePubSubMessage(qq int64, msg *model.Message) {
+	if qq != 0 {
+		h.mu.RLock()
+		conn, ok := h.conns[qq]
+		h.mu.RUnlock()
+		if ok {
+			conn.WriteJSON(msg)
+		}
+		return
+	}
+	if msg.GroupID != "" {
+		members, err := h.svc.GetGroupMembers(msg.GroupID)
+		if err != nil {
+			return
+		}
+		for _, memberQQ := range members {
+			if memberQQ != msg.FromQQ {
+				h.mu.RLock()
+				conn, ok := h.conns[memberQQ]
+				h.mu.RUnlock()
+				if ok {
+					conn.WriteJSON(msg)
+				}
+			}
+		}
+	}
+}
+
+func (h *Hub) HandlePubSubMessage(qq int64, msg *model.Message) {
+	h.handlePubSubMessage(qq, msg)
 }
