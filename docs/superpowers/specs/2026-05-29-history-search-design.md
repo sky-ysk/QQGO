@@ -131,36 +131,51 @@ func (s *ChatService) GetHistoryWithTarget(myQQ, targetQQ int64, offset, limit i
 ```sql
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
-    content='messages',
-    content_rowid='id',
     tokenize='unicode61'
 );
 ```
 
 | 配置项 | 说明 |
 |--------|------|
-| `content` | 消息文本内容（图片/文件消息存储文件名） |
-| `content='messages'` | 关联原始 messages 表，INSERT/UPDATE/DELETE 自动同步 |
-| `content_rowid='id'` | 关联 messages 表的自增主键 ID |
+| `content` | 消息文本内容副本（图片/文件消息存储文件名） |
 | `tokenize='unicode61'` | Unicode 分词器，支持中英文（中文按字符分词） |
+
+FTS 表存储消息内容副本，通过触发器与 messages 表保持同步。rowid 与 messages.id 对应。
 
 #### 数据同步
 
-使用 `content='messages'` 的外部内容表模式，FTS5 自动跟踪原始表的变更：
+FTS 表存储消息内容副本，通过 SQLite 触发器与 messages 表保持同步：
 
-- INSERT 到 messages → 自动同步到 messages_fts
-- UPDATE messages → FTS5 自动更新索引
-- DELETE from messages → FTS5 自动移除索引条目
+```sql
+-- INSERT 触发器
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+END;
 
-无需手动维护同步逻辑。
+-- UPDATE 触发器
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE OF content ON messages BEGIN
+    UPDATE messages_fts SET content = new.content WHERE rowid = new.id;
+END;
+
+-- DELETE 触发器
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    DELETE FROM messages_fts WHERE rowid = old.id;
+END;
+```
+
+触发器在 `InitFTS` 中一并创建。写入消息时无需额外代码，触发器自动维护 FTS 索引。
 
 #### 搜索查询
 
 **全局搜索：**
 ```sql
-SELECT rowid FROM messages_fts 
-WHERE messages_fts MATCH '关键词' 
-ORDER BY rank 
+SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
+FROM messages_fts f
+JOIN messages m ON f.rowid = m.id
+WHERE messages_fts MATCH '关键词'
+  AND m.msg_type IN (1, 2, 3)
+  AND m.is_recalled = 0
+ORDER BY rank
 LIMIT 50
 ```
 
@@ -175,6 +190,8 @@ WHERE messages_fts MATCH '关键词'
     (m.from_qq = ? AND m.to_qq = ?)
   )
   AND m.group_id = ''
+  AND m.msg_type IN (1, 2, 3)
+  AND m.is_recalled = 0
 ORDER BY rank
 LIMIT 50
 ```
@@ -186,6 +203,8 @@ FROM messages_fts f
 JOIN messages m ON f.rowid = m.id
 WHERE messages_fts MATCH '关键词'
   AND m.group_id = ?
+  AND m.msg_type IN (1, 2, 3)
+  AND m.is_recalled = 0
 ORDER BY rank
 LIMIT 50
 ```
@@ -195,22 +214,28 @@ LIMIT 50
 对每个匹配的消息，获取前后各 1 条消息作为上下文：
 
 ```go
-func (s *ChatService) getContextMessages(messageID int64, myQQ int64) (*model.HistoryMessage, *model.HistoryMessage, error) {
+func (s *ChatService) getContextMessages(messageID int64, msg *model.Message, myQQ int64) (*model.HistoryMessage, *model.HistoryMessage, error) {
+    // 根据消息类型确定会话范围
+    query := s.db.Table("messages").Where("msg_type IN ? AND is_recalled = ?", []int32{1,2,3}, false)
+    
+    if msg.GroupID != "" {
+        // 群聊：同一群内
+        query = query.Where("group_id = ?", msg.GroupID)
+    } else {
+        // 私聊：同一会话（双向）
+        query = query.Where(
+            "((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ''",
+            msg.FromQQ, msg.ToQQ, msg.ToQQ, msg.FromQQ,
+        )
+    }
+
     // 获取前一条
     var before *model.HistoryMessage
-    s.db.Table("messages").
-        Where("id < ? AND ((from_qq = ? OR to_qq = ?)) AND msg_type IN ? AND is_recalled = ?", 
-              messageID, myQQ, myQQ, []int32{1,2,3}, false).
-        Order("id DESC").Limit(1).
-        First(&before)
+    query.Where("id < ?", messageID).Order("id DESC").Limit(1).First(&before)
 
     // 获取后一条
     var after *model.HistoryMessage
-    s.db.Table("messages").
-        Where("id > ? AND ((from_qq = ? OR to_qq = ?)) AND msg_type IN ? AND is_recalled = ?", 
-              messageID, myQQ, myQQ, []int32{1,2,3}, false).
-        Order("id ASC").Limit(1).
-        First(&after)
+    query.Where("id > ?", messageID).Order("id ASC").Limit(1).First(&after)
 
     return before, after, nil
 }
