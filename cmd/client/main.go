@@ -242,6 +242,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			return true
 		}
 		var fromTime, toTime string
+		// Note: unrecognized tokens (e.g., typos like --form) are silently skipped.
 		for i := 2; i < len(parts); i++ {
 			if parts[i] == "--from" && i+1 < len(parts) {
 				fromTime = parts[i+1]
@@ -1017,9 +1018,11 @@ func main() {
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
 					if resp.Code == 0 {
 						targetQQ = resp.QQNumber
-						historyTargetQQ = resp.QQNumber
-						historyOffset = 0
-						statusIcon := "●"
+					historyTargetQQ = resp.QQNumber
+					historyOffset = 0
+					historyFromTime = ""
+					historyToTime = ""
+					statusIcon := "●"
 						if !resp.Online {
 							statusIcon = "○"
 						}
