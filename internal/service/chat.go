@@ -881,8 +881,8 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
 			FROM messages_fts f
 			JOIN messages m ON f.rowid = m.id
-			WHERE messages_fts MATCH ?
-			  AND m.group_id = ?
+		WHERE f MATCH ?
+		  AND m.group_id = ?
 			  AND m.msg_type IN (1, 2, 3)
 			  AND m.is_recalled = 0
 			ORDER BY rank
@@ -893,8 +893,8 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
 			FROM messages_fts f
 			JOIN messages m ON f.rowid = m.id
-			WHERE messages_fts MATCH ?
-			  AND ((m.from_qq = ? AND m.to_qq = ?) OR (m.from_qq = ? AND m.to_qq = ?))
+		WHERE f MATCH ?
+		  AND ((m.from_qq = ? AND m.to_qq = ?) OR (m.from_qq = ? AND m.to_qq = ?))
 			  AND m.group_id = ''
 			  AND m.msg_type IN (1, 2, 3)
 			  AND m.is_recalled = 0
@@ -906,8 +906,8 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
 			FROM messages_fts f
 			JOIN messages m ON f.rowid = m.id
-			WHERE messages_fts MATCH ?
-			  AND (m.from_qq = ? OR m.to_qq = ?)
+		WHERE f MATCH ?
+		  AND (m.from_qq = ? OR m.to_qq = ?)
 			  AND m.msg_type IN (1, 2, 3)
 			  AND m.is_recalled = 0
 			ORDER BY rank

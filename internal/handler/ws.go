@@ -956,11 +956,6 @@ func (h *Hub) handleSearchMessages(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	if len(req.Keyword) < 1 {
-		h.writeFriendError(c, "keyword too short")
-		return
-	}
-
 	resp, err := h.svc.SearchMessages(c.QQ, req.Keyword, req.TargetQQ, req.GroupID, req.Limit)
 	if err != nil {
 		log.Printf("[search] query error: %v", err)
