@@ -1114,8 +1114,9 @@ func main() {
 
 			case model.MsgTypeSearchResults:
 				var resp model.SearchResponse
-				json.Unmarshal([]byte(msg.Content), &resp)
-				displayMessageSearchResults(resp)
+				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
+					displayMessageSearchResults(resp)
+				}
 				prompt()
 
 			case model.MsgTypeChangePasswordAck:
