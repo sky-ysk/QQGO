@@ -31,6 +31,8 @@ var (
 	historyTargetNickname string
 	historyGroupID        string
 	historyGroupName      string
+	historyFromTime       string
+	historyToTime         string
 )
 
 func handleCommand(conn *websocket.Conn, text string) bool {
@@ -161,7 +163,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			requestGroupHistory(conn, historyGroupID, historyOffset)
 		} else if historyTargetQQ != 0 {
 			historyOffset += 30
-			requestHistory(conn, historyTargetQQ, historyOffset)
+			requestHistory(conn, historyTargetQQ, historyOffset, historyFromTime, historyToTime)
 		} else {
 			fmt.Println("[cmd] no chat history context, use /to <qq_number> or /togroup <group_id> first")
 		}
@@ -180,7 +182,7 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 			} else {
 				historyOffset = 0
 			}
-			requestHistory(conn, historyTargetQQ, historyOffset)
+			requestHistory(conn, historyTargetQQ, historyOffset, historyFromTime, historyToTime)
 		} else {
 			fmt.Println("[cmd] no chat history context, use /to <qq_number> or /togroup <group_id> first")
 		}
@@ -228,6 +230,33 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 
 	case "/sessions":
 		listSessions(conn)
+
+	case "/history":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /history <qq> [--from YYYY-MM-DD] [--to YYYY-MM-DD]")
+			return true
+		}
+		targetQQ, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			fmt.Println("[cmd] invalid QQ number")
+			return true
+		}
+		var fromTime, toTime string
+		for i := 2; i < len(parts); i++ {
+			if parts[i] == "--from" && i+1 < len(parts) {
+				fromTime = parts[i+1]
+				i++
+			} else if parts[i] == "--to" && i+1 < len(parts) {
+				toTime = parts[i+1]
+				i++
+			}
+		}
+		historyTargetQQ = targetQQ
+		historyOffset = 0
+		historyFromTime = fromTime
+		historyToTime = toTime
+		historyGroupID = ""
+		requestHistory(conn, targetQQ, 0, fromTime, toTime)
 
 	case "/changepw":
 		if len(parts) < 3 {
@@ -477,11 +506,13 @@ func checkUser(conn *websocket.Conn, qq int64) {
 	conn.WriteMessage(websocket.TextMessage, msg)
 }
 
-func requestHistory(conn *websocket.Conn, targetQQ int64, offset int) {
+func requestHistory(conn *websocket.Conn, targetQQ int64, offset int, fromTime string, toTime string) {
 	payload, _ := json.Marshal(&model.HistoryRequest{
 		TargetQQ: targetQQ,
 		Offset:   offset,
 		Limit:    30,
+		FromTime: fromTime,
+		ToTime:   toTime,
 	})
 	msg, _ := json.Marshal(&model.Message{
 		MsgType: model.MsgTypeHistory,
@@ -993,7 +1024,7 @@ func main() {
 							statusIcon = "○"
 						}
 						fmt.Printf("\033[2K\r[cmd] switched to %s %s(QQ:%d)\n> ", statusIcon, resp.Nickname, resp.QQNumber)
-						requestHistory(conn, resp.QQNumber, 0)
+						requestHistory(conn, resp.QQNumber, 0, "", "")
 					} else {
 						fmt.Printf("\033[2K\r[cmd] %s\n> ", resp.Message)
 					}
@@ -1241,7 +1272,21 @@ func displayHistory(resp model.HistoryResponse) {
 		return
 	}
 
-	fmt.Printf("\n───── History with %s (QQ:%d) ─────\n", resp.Nickname, resp.TargetQQ)
+	title := fmt.Sprintf("\n───── History with %s (QQ:%d)", resp.Nickname, resp.TargetQQ)
+	if historyFromTime != "" || historyToTime != "" {
+		title += fmt.Sprintf(" [%s ~ %s]", func() string {
+			f := historyFromTime
+			if f == "" {
+				f = "..."
+			}
+			t := historyToTime
+			if t == "" {
+				t = "..."
+			}
+			return f + " ~ " + t
+		}())
+	}
+	fmt.Println(title + " ─────")
 	for _, m := range resp.Messages {
 		timeStr := m.CreatedAt.Format("15:04:05")
 		if m.FromQQ == myQQNumber {
