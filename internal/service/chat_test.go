@@ -7,6 +7,7 @@ import (
 
 	"github.com/qqgo/server/internal/config"
 	"github.com/qqgo/server/internal/model"
+	"github.com/qqgo/server/internal/store"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -34,6 +35,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	}
 
 	InitJWT(config.JWTConfig{Secret: "test-secret", AccessTTL: 900, RefreshTTLDays: 7})
+
+	if err := store.InitFTS(db); err != nil {
+		t.Logf("FTS init warning: %v (search tests may fail)", err)
+	}
 
 	return db
 }
@@ -1010,5 +1015,106 @@ func TestHistoryTimeRange(t *testing.T) {
 	}
 	if hasMore {
 		t.Fatal("should not have more when no results")
+	}
+}
+
+func TestSearchMessages(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+	qq3, _ := svc.Register("charlie", "password789")
+
+	now := time.Now().UTC()
+	msgs := []model.Message{
+		{MsgType: 1, FromQQ: qq1, ToQQ: qq2, Content: "你好，项目进度怎么样了？", CreatedAt: now.Add(-2 * time.Hour)},
+		{MsgType: 1, FromQQ: qq2, ToQQ: qq1, Content: "完成，项目已经80%了", CreatedAt: now.Add(-1 * time.Hour)},
+		{MsgType: 1, FromQQ: qq1, ToQQ: qq2, Content: "太好了，下周上线", CreatedAt: now.Add(-30 * time.Minute)},
+		{MsgType: 1, FromQQ: qq1, ToQQ: qq3, Content: "项目，新计划什么时候开始", CreatedAt: now.Add(-10 * time.Minute)},
+	}
+	for _, m := range msgs {
+		svc.db.Create(&m)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, err := svc.SearchMessages(qq1, "项目", 0, "", 50)
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if resp.Total < 3 {
+		t.Fatalf("expected at least 3 results for '项目', got %d", resp.Total)
+	}
+
+	resp, err = svc.SearchMessages(qq1, "项目", qq2, "", 50)
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if resp.Total < 2 {
+		t.Fatalf("expected at least 2 results in private chat, got %d", resp.Total)
+	}
+	for _, r := range resp.Results {
+		if r.ToQQ == qq3 || r.FromQQ == qq3 {
+			t.Fatal("should not include messages with charlie in private search")
+		}
+	}
+
+	resp, err = svc.SearchMessages(qq1, "不存在的关键词", 0, "", 50)
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if resp.Total != 0 {
+		t.Fatalf("expected 0 results, got %d", resp.Total)
+	}
+
+	resp, err = svc.SearchMessages(qq1, "完成", qq2, "", 50)
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if resp.Total < 1 {
+		t.Fatal("expected at least 1 result for '完成'")
+	}
+	firstResult := resp.Results[0]
+	if firstResult.ContextBefore == nil {
+		t.Fatal("expected context before")
+	}
+	if firstResult.ContextBefore.Content != "你好，项目进度怎么样了？" {
+		t.Fatalf("unexpected context before: %s", firstResult.ContextBefore.Content)
+	}
+	if firstResult.ContextAfter == nil {
+		t.Fatal("expected context after")
+	}
+	if firstResult.ContextAfter.Content != "太好了，下周上线" {
+		t.Fatalf("unexpected context after: %s", firstResult.ContextAfter.Content)
+	}
+}
+
+func TestSearchRecalledMessages(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db)
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	now := time.Now().UTC()
+	msgs := []model.Message{
+		{MsgType: 1, FromQQ: qq1, ToQQ: qq2, Content: "这条消息会被撤回", CreatedAt: now.Add(-1 * time.Hour)},
+		{MsgType: 1, FromQQ: qq1, ToQQ: qq2, Content: "这条消息正常", CreatedAt: now},
+	}
+	for _, m := range msgs {
+		svc.db.Create(&m)
+	}
+
+	svc.db.Model(&model.Message{}).Where("content = ?", "这条消息会被撤回").Update("is_recalled", true)
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, err := svc.SearchMessages(qq1, "撤回", 0, "", 50)
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if resp.Total != 0 {
+		t.Fatalf("recalled messages should not appear in search, got %d results", resp.Total)
 	}
 }

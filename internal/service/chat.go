@@ -899,10 +899,10 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 	if groupID != "" {
 		err = s.db.Raw(`
 			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
-			FROM messages_fts f
-			JOIN messages m ON f.rowid = m.id
-		WHERE f MATCH ?
-		  AND m.group_id = ?
+			FROM messages_fts
+			JOIN messages m ON messages_fts.rowid = m.id
+			WHERE messages_fts MATCH ?
+			  AND m.group_id = ?
 			  AND m.msg_type IN (1, 2, 3)
 			  AND m.is_recalled = 0
 			ORDER BY rank
@@ -911,10 +911,10 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 	} else if targetQQ != 0 {
 		err = s.db.Raw(`
 			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
-			FROM messages_fts f
-			JOIN messages m ON f.rowid = m.id
-		WHERE f MATCH ?
-		  AND ((m.from_qq = ? AND m.to_qq = ?) OR (m.from_qq = ? AND m.to_qq = ?))
+			FROM messages_fts
+			JOIN messages m ON messages_fts.rowid = m.id
+			WHERE messages_fts MATCH ?
+			  AND ((m.from_qq = ? AND m.to_qq = ?) OR (m.from_qq = ? AND m.to_qq = ?))
 			  AND m.group_id = ''
 			  AND m.msg_type IN (1, 2, 3)
 			  AND m.is_recalled = 0
@@ -924,10 +924,10 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 	} else {
 		err = s.db.Raw(`
 			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
-			FROM messages_fts f
-			JOIN messages m ON f.rowid = m.id
-		WHERE f MATCH ?
-		  AND (m.from_qq = ? OR m.to_qq = ?)
+			FROM messages_fts
+			JOIN messages m ON messages_fts.rowid = m.id
+			WHERE messages_fts MATCH ?
+			  AND (m.from_qq = ? OR m.to_qq = ?)
 			  AND m.msg_type IN (1, 2, 3)
 			  AND m.is_recalled = 0
 			ORDER BY rank
@@ -965,26 +965,31 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 }
 
 func escapeFTS5Keyword(keyword string) string {
-	return `"` + strings.ReplaceAll(keyword, `"`, `""`) + `"`
+	return `"` + strings.ReplaceAll(keyword, `"`, `""`) + `"*`
 }
 
 func (s *ChatService) getContextMessages(messageID int64, msg *model.Message, myQQ int64) (*model.HistoryMessage, *model.HistoryMessage) {
-	query := s.db.Table("messages").Where("msg_type IN ? AND is_recalled = ?", []int{1, 2, 3}, false)
+	baseQuery := s.db.Table("messages").Where("msg_type IN ? AND is_recalled = ?", []int{1, 2, 3}, false)
 
 	if msg.GroupID != "" {
-		query = query.Where("group_id = ?", msg.GroupID)
+		baseQuery = baseQuery.Where("group_id = ?", msg.GroupID)
 	} else {
-		query = query.Where(
+		baseQuery = baseQuery.Where(
 			"((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ''",
 			msg.FromQQ, msg.ToQQ, msg.ToQQ, msg.FromQQ,
 		)
 	}
 
 	var before model.HistoryMessage
-	errBefore := query.Where("id < ?", messageID).Order("id DESC").Limit(1).First(&before).Error
+	errBefore := baseQuery.Where("id < ?", messageID).Order("id DESC").Limit(1).First(&before).Error
 
 	var after model.HistoryMessage
-	errAfter := query.Where("id > ?", messageID).Order("id ASC").Limit(1).First(&after).Error
+	errAfter := s.db.Table("messages").Where("msg_type IN ? AND is_recalled = ?", []int{1, 2, 3}, false).
+		Where(
+			"((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ?",
+			msg.FromQQ, msg.ToQQ, msg.ToQQ, msg.FromQQ, msg.GroupID,
+		).
+		Where("id > ?", messageID).Order("id ASC").Limit(1).First(&after).Error
 
 	var resultBefore, resultAfter *model.HistoryMessage
 	if errBefore == nil {
