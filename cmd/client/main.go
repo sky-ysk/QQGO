@@ -1309,7 +1309,7 @@ func displayHistory(resp model.HistoryResponse) {
 
 	title := fmt.Sprintf("\n───── History with %s (QQ:%d)", resp.Nickname, resp.TargetQQ)
 	if historyFromTime != "" || historyToTime != "" {
-		title += fmt.Sprintf(" [%s ~ %s]", func() string {
+		title += fmt.Sprintf(" %s", func() string {
 			f := historyFromTime
 			if f == "" {
 				f = "..."
@@ -1318,7 +1318,7 @@ func displayHistory(resp model.HistoryResponse) {
 			if t == "" {
 				t = "..."
 			}
-			return f + " ~ " + t
+			return "[" + f + " ~ " + t + "]"
 		}())
 	}
 	fmt.Println(title + " ─────")

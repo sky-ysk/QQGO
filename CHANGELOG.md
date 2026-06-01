@@ -2,6 +2,31 @@
 
 ---
 
+## [v0.9] — 2026-06-01 / branch: `feature/v0.9-history-search`
+
+### Added
+- **历史消息时间范围查询：** `/history <qq> --from YYYY-MM-DD --to YYYY-MM-DD` 命令，支持按时间范围筛选历史消息；`/prev` `/next` 翻页保持时间范围
+- **全文搜索：** `/searchmsg <关键词> [qq]` 命令，支持全局搜索和指定会话搜索；SQLite FTS5 虚拟表 + 触发器自动同步
+- **搜索上下文：** 搜索结果每条匹配消息显示前后各 1 条上下文消息
+- **新消息类型：** `MsgTypeSearchMessages(315)`, `MsgTypeSearchResults(316)`
+- **新数据模型：** `SearchRequest`, `SearchResponse`, `SearchResultItem`；`HistoryRequest` 扩展 `FromTime`/`ToTime` 字段
+- **FTS5 基础设施：** `messages_fts` 虚拟表 + INSERT/UPDATE/DELETE 触发器 + 已有数据自动重建索引
+
+### Changed
+- **GetHistoryWithTarget：** 新增 `fromTime`/`toTime` 参数，支持时间范围过滤
+- **handleHistory：** 传递时间范围参数到 service 层
+- **displayHistory：** 标题显示时间范围（如有）
+- **requestHistory：** 支持 fromTime/toTime 参数
+- **setupTestDB：** 初始化 FTS5 虚拟表
+
+### Fixed
+- **时间格式比较：** 修复 SQLite 空格分隔时间格式与 API T 分隔格式的比较问题（parseTimeArg 辅助函数）
+- **FTS5 MATCH 语法：** 修正 FTS5 表别名 MATCH 语法（使用表名而非别名）
+- **GORM 查询突变：** 修复 getContextMessages 中 GORM 条件累积问题（使用独立查询链）
+- **中文分词：** 使用 FTS5 前缀搜索（`"*` 后缀）解决 unicode61 中文分词限制
+
+---
+
 ## [v0.8] — 2026-05-26 / branch: `main`
 
 ### Batch 1 — 部署与安全基础（✅ 已完成，2026-05-26）
