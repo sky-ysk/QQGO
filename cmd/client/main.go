@@ -259,6 +259,18 @@ func handleCommand(conn *websocket.Conn, text string) bool {
 		historyGroupID = ""
 		requestHistory(conn, targetQQ, 0, fromTime, toTime)
 
+	case "/searchmsg":
+		if len(parts) < 2 {
+			fmt.Println("[cmd] Usage: /searchmsg <keyword> [qq]")
+			return true
+		}
+		keyword := parts[1]
+		var targetQQ int64
+		if len(parts) >= 3 {
+			targetQQ, _ = strconv.ParseInt(parts[2], 10, 64)
+		}
+		searchMessages(conn, keyword, targetQQ)
+
 	case "/changepw":
 		if len(parts) < 3 {
 			fmt.Println("[cmd] Usage: /changepw <old_password> <new_password>")
@@ -530,6 +542,19 @@ func requestGroupHistory(conn *websocket.Conn, groupID string, offset int) {
 	})
 	msg, _ := json.Marshal(&model.Message{
 		MsgType: model.MsgTypeGroupHistory,
+		Content: string(payload),
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func searchMessages(conn *websocket.Conn, keyword string, targetQQ int64) {
+	payload, _ := json.Marshal(&model.SearchRequest{
+		Keyword:  keyword,
+		TargetQQ: targetQQ,
+		Limit:    50,
+	})
+	msg, _ := json.Marshal(&model.Message{
+		MsgType: model.MsgTypeSearchMessages,
 		Content: string(payload),
 	})
 	conn.WriteMessage(websocket.TextMessage, msg)
@@ -1087,6 +1112,12 @@ func main() {
 				}
 				prompt()
 
+			case model.MsgTypeSearchResults:
+				var resp model.SearchResponse
+				json.Unmarshal([]byte(msg.Content), &resp)
+				displayMessageSearchResults(resp)
+				prompt()
+
 			case model.MsgTypeChangePasswordAck:
 				var resp model.ChangePasswordResponse
 				if err := json.Unmarshal([]byte(msg.Content), &resp); err == nil {
@@ -1374,6 +1405,47 @@ func displayGroupHistory(resp model.GroupHistoryResponse) {
 		fmt.Println("  (use /next for newer messages)")
 	}
 	fmt.Println("─────────────────────────────────────")
+}
+
+func displayMessageSearchResults(resp model.SearchResponse) {
+	fmt.Printf("\n───── Search Results: \"%s\" (%d found) ─────\n", resp.Keyword, resp.Total)
+	if len(resp.Results) == 0 {
+		fmt.Println("  (no results)")
+		fmt.Println("─────────────────────────────────────────────")
+		return
+	}
+
+	for i, item := range resp.Results {
+		if i > 0 {
+			fmt.Println()
+		}
+
+		if item.ContextBefore != nil {
+			timeStr := item.ContextBefore.CreatedAt.Format("01-02 15:04")
+			sender := fmt.Sprintf("%d", item.ContextBefore.FromQQ)
+			if item.ContextBefore.FromQQ == myQQNumber {
+				sender = "我"
+			}
+			fmt.Printf("    [%s] %s  %s\n", sender, timeStr, item.ContextBefore.Content)
+		}
+
+		timeStr := item.CreatedAt.Format("01-02 15:04")
+		sender := fmt.Sprintf("%d", item.FromQQ)
+		if item.FromQQ == myQQNumber {
+			sender = "我"
+		}
+		fmt.Printf("  > [%s] %s  %s\n", sender, timeStr, item.Content)
+
+		if item.ContextAfter != nil {
+			timeStr := item.ContextAfter.CreatedAt.Format("01-02 15:04")
+			sender := fmt.Sprintf("%d", item.ContextAfter.FromQQ)
+			if item.ContextAfter.FromQQ == myQQNumber {
+				sender = "我"
+			}
+			fmt.Printf("    [%s] %s  %s\n", sender, timeStr, item.ContextAfter.Content)
+		}
+	}
+	fmt.Println("─────────────────────────────────────────────")
 }
 
 func displayBlacklist(users []model.BlockedUserInfo) {
