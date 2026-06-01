@@ -40,7 +40,7 @@ func (m *mockService) DeleteFriendGroup(qq int64, name string) error            
 func (m *mockService) GetUserByQQ(qq int64) (*model.User, error)                             { return nil, nil }
 func (m *mockService) IsFriend(qq1, qq2 int64) bool                                         { return false }
 func (m *mockService) CheckAndIncrementNonFriendMessage(fromQQ, toQQ int64) error            { return nil }
-func (m *mockService) GetHistoryWithTarget(myQQ, targetQQ int64, offset, limit int) ([]*model.Message, bool, error) {
+func (m *mockService) GetHistoryWithTarget(myQQ, targetQQ int64, offset, limit int, fromTime, toTime string) ([]*model.Message, bool, error) {
 	return nil, false, nil
 }
 func (m *mockService) CreateGroup(name string, ownerQQ int64) (string, error)                { return "", nil }

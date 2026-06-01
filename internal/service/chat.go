@@ -499,12 +499,22 @@ func (s *ChatService) ClearMessageCounts(qq1 int64, qq2 int64) {
 	s.db.Where("from_qq = ? AND to_qq = ?", qq2, qq1).Delete(&model.MessageCount{})
 }
 
-func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int) ([]*model.Message, bool, error) {
+func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int, fromTime string, toTime string) ([]*model.Message, bool, error) {
 	var msgs []*model.Message
 	query := s.db.Where(
 		"((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ''",
 		myQQ, targetQQ, targetQQ, myQQ,
 	).Where("msg_type IN ?", []int{1, 2, 3}).Where("is_recalled = ?", false)
+
+	if fromTime != "" {
+		query = query.Where("created_at >= ?", fromTime)
+	}
+	if toTime != "" {
+		if len(toTime) == 10 {
+			toTime = toTime + "T23:59:59"
+		}
+		query = query.Where("created_at <= ?", toTime)
+	}
 
 	var total int64
 	query.Model(&model.Message{}).Count(&total)

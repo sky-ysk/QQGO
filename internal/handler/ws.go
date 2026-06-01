@@ -74,7 +74,7 @@ type Service interface {
 	GetUserByQQ(qq int64) (*model.User, error)
 	IsFriend(qq1 int64, qq2 int64) bool
 	CheckAndIncrementNonFriendMessage(fromQQ int64, toQQ int64) error
-	GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int) ([]*model.Message, bool, error)
+	GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int, fromTime string, toTime string) ([]*model.Message, bool, error)
 	CreateGroup(name string, ownerQQ int64) (string, error)
 	JoinGroup(groupID string, qq int64) error
 	LeaveGroup(groupID string, qq int64) error
@@ -824,7 +824,7 @@ func (h *Hub) handleHistory(c *ws.Conn, msg *model.Message) {
 		return
 	}
 
-	msgs, hasMore, err := h.svc.GetHistoryWithTarget(c.QQ, req.TargetQQ, req.Offset, req.Limit)
+	msgs, hasMore, err := h.svc.GetHistoryWithTarget(c.QQ, req.TargetQQ, req.Offset, req.Limit, req.FromTime, req.ToTime)
 	if err != nil {
 		log.Printf("[history] query error: %v", err)
 		h.writeFriendError(c, "query failed")

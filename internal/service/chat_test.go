@@ -179,7 +179,7 @@ func TestGetHistoryWithTarget(t *testing.T) {
 		})
 	}
 
-	msgs, hasMore, err := svc.GetHistoryWithTarget(qq1, qq2, 0, 30)
+	msgs, hasMore, err := svc.GetHistoryWithTarget(qq1, qq2, 0, 30, "", "")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestGetHistoryWithTarget(t *testing.T) {
 		t.Fatal("should not have more")
 	}
 
-	msgs, hasMore, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 5)
+	msgs, hasMore, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 5, "", "")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestGetHistoryWithTarget(t *testing.T) {
 		t.Fatal("should have more")
 	}
 
-	msgs, hasMore, err = svc.GetHistoryWithTarget(qq1, qq2, 5, 5)
+	msgs, hasMore, err = svc.GetHistoryWithTarget(qq1, qq2, 5, 5, "", "")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestGetHistoryWithTarget(t *testing.T) {
 		t.Fatal("should not have more on page 2")
 	}
 
-	msgs, _, err = svc.GetHistoryWithTarget(qq1, qq2, 100, 30)
+	msgs, _, err = svc.GetHistoryWithTarget(qq1, qq2, 100, 30, "", "")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -805,7 +805,7 @@ func TestRecalledMessageNotInHistory(t *testing.T) {
 
 	svc.RecallMessage(qq1, msg1.ID)
 
-	msgs, _, err := svc.GetHistoryWithTarget(qq1, qq2, 0, 30)
+	msgs, _, err := svc.GetHistoryWithTarget(qq1, qq2, 0, 30, "", "")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
