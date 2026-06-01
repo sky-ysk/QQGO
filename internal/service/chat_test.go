@@ -949,9 +949,7 @@ func TestHistoryTimeRange(t *testing.T) {
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
 
-	svc.AcceptFriend(qq2, qq1)
-
-	now := time.Now()
+	now := time.Now().UTC()
 	msgs := []model.Message{
 		{MsgType: 1, FromQQ: qq1, ToQQ: qq2, Content: "msg1", CreatedAt: now.Add(-48 * time.Hour)},
 		{MsgType: 1, FromQQ: qq2, ToQQ: qq1, Content: "msg2", CreatedAt: now.Add(-24 * time.Hour)},
@@ -972,8 +970,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatal("should not have more")
 	}
 
-	nowUTC := now.UTC()
-	fromTime := nowUTC.Add(-30 * time.Hour).Format("2006-01-02T15:04:05")
+	fromTime := now.Add(-30 * time.Hour).Format("2006-01-02T15:04:05")
 	result, _, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, fromTime, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -982,7 +979,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatalf("expected 2 messages with --from, got %d", len(result))
 	}
 
-	toTime := nowUTC.Add(-12 * time.Hour).Format("2006-01-02")
+	toTime := now.Add(-12 * time.Hour).Format("2006-01-02")
 	result, _, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, fromTime, toTime)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -994,7 +991,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatalf("expected msg2, got %s", result[0].Content)
 	}
 
-	toTimeDate := nowUTC.Format("2006-01-02")
+	toTimeDate := now.Format("2006-01-02")
 	result, _, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, fromTime, toTimeDate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1003,7 +1000,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatalf("expected 2 messages with date --to, got %d", len(result))
 	}
 
-	futureFrom := nowUTC.Add(24 * time.Hour).Format("2006-01-02")
+	futureFrom := now.Add(24 * time.Hour).Format("2006-01-02")
 	result, hasMore, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, futureFrom, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
