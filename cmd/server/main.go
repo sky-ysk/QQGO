@@ -50,6 +50,12 @@ func main() {
 	}
 	log.Printf("database initialized at %s", cfg.DBPath)
 
+	if err := store.InitFTS(db); err != nil {
+		log.Printf("[fts] init warning: %v (search may be unavailable)", err)
+	} else {
+		log.Printf("[fts] full-text search initialized")
+	}
+
 	svc := service.NewChatService(db)
 	rl := middleware.NewRateLimiter(cfg.MsgRateLimit)
 	hub := handler.NewHub(svc, nil, cfg.Server.MaxConnections, rl, onlineTracker, pubsubRouter, instanceID)
