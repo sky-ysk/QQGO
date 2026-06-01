@@ -1018,8 +1018,17 @@ func TestHistoryTimeRange(t *testing.T) {
 	}
 }
 
+func ftsAvailable(db *gorm.DB) bool {
+	var count int64
+	err := db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages_fts'").Scan(&count).Error
+	return err == nil && count > 0
+}
+
 func TestSearchMessages(t *testing.T) {
 	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
 	svc := NewChatService(db)
 
 	qq1, _ := svc.Register("alice", "password123")
@@ -1092,6 +1101,9 @@ func TestSearchMessages(t *testing.T) {
 
 func TestSearchRecalledMessages(t *testing.T) {
 	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
 	svc := NewChatService(db)
 
 	qq1, _ := svc.Register("alice", "password123")
