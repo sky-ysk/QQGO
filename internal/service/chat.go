@@ -499,6 +499,15 @@ func (s *ChatService) ClearMessageCounts(qq1 int64, qq2 int64) {
 	s.db.Where("from_qq = ? AND to_qq = ?", qq2, qq1).Delete(&model.MessageCount{})
 }
 
+func parseTimeArg(s string) (time.Time, error) {
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported time format: %s", s)
+}
+
 func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset int, limit int, fromTime string, toTime string) ([]*model.Message, bool, error) {
 	var msgs []*model.Message
 	query := s.db.Where(
@@ -507,13 +516,21 @@ func (s *ChatService) GetHistoryWithTarget(myQQ int64, targetQQ int64, offset in
 	).Where("msg_type IN ?", []int{1, 2, 3}).Where("is_recalled = ?", false)
 
 	if fromTime != "" {
-		query = query.Where("created_at >= ?", fromTime)
+		if t, err := parseTimeArg(fromTime); err == nil {
+			query = query.Where("created_at >= ?", t)
+		} else {
+			query = query.Where("created_at >= ?", fromTime)
+		}
 	}
 	if toTime != "" {
 		if len(toTime) == 10 {
 			toTime = toTime + "T23:59:59"
 		}
-		query = query.Where("created_at <= ?", toTime)
+		if t, err := parseTimeArg(toTime); err == nil {
+			query = query.Where("created_at <= ?", t)
+		} else {
+			query = query.Where("created_at <= ?", toTime)
+		}
 	}
 
 	var total int64
