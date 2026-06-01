@@ -91,6 +91,7 @@ type Service interface {
 	GetBlacklist(qq int64) ([]model.BlockedUserInfo, error)
 	MarkRead(messageID int64) error
 	RecallMessage(qq int64, messageID int64) error
+	SearchMessages(myQQ int64, keyword string, targetQQ int64, groupID string, limit int) (*model.SearchResponse, error)
 }
 
 func NewHub(svc Service, onStatus func(int64, bool), maxConns int, rl interface {
@@ -230,6 +231,8 @@ func (h *Hub) dispatch(c *ws.Conn, data []byte) {
 		h.handleHistory(c, &msg)
 	case model.MsgTypeGroupHistory:
 		h.handleGroupHistory(c, &msg)
+	case model.MsgTypeSearchMessages:
+		h.handleSearchMessages(c, &msg)
 	case model.MsgTypeSessionList:
 		h.handleSessionList(c, &msg)
 	case model.MsgTypeGroupCreate:
@@ -932,6 +935,42 @@ func (h *Hub) handleSessionList(c *ws.Conn, msg *model.Message) {
 	payload, _ := json.Marshal(resp)
 	c.WriteJSON(&model.Message{
 		MsgType: model.MsgTypeSessionList,
+		Content: string(payload),
+	})
+}
+
+func (h *Hub) handleSearchMessages(c *ws.Conn, msg *model.Message) {
+	if c.QQ == 0 {
+		h.writeFriendError(c, "not logged in")
+		return
+	}
+
+	var req model.SearchRequest
+	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
+		h.writeFriendError(c, "invalid payload")
+		return
+	}
+
+	if req.Keyword == "" {
+		h.writeFriendError(c, "keyword is required")
+		return
+	}
+
+	if len(req.Keyword) < 1 {
+		h.writeFriendError(c, "keyword too short")
+		return
+	}
+
+	resp, err := h.svc.SearchMessages(c.QQ, req.Keyword, req.TargetQQ, req.GroupID, req.Limit)
+	if err != nil {
+		log.Printf("[search] query error: %v", err)
+		h.writeFriendError(c, "search failed")
+		return
+	}
+
+	payload, _ := json.Marshal(resp)
+	c.WriteJSON(&model.Message{
+		MsgType: model.MsgTypeSearchResults,
 		Content: string(payload),
 	})
 }

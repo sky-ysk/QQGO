@@ -63,6 +63,9 @@ func (m *mockService) IsBlocked(qq, blockedQQ int64) bool                       
 func (m *mockService) GetBlacklist(qq int64) ([]model.BlockedUserInfo, error)                { return nil, nil }
 func (m *mockService) MarkRead(messageID int64) error                                        { return nil }
 func (m *mockService) RecallMessage(qq, messageID int64) error                               { return nil }
+func (m *mockService) SearchMessages(myQQ int64, keyword string, targetQQ int64, groupID string, limit int) (*model.SearchResponse, error) {
+	return nil, nil
+}
 
 func TestConnectionLimit(t *testing.T) {
 	svc := &mockService{}

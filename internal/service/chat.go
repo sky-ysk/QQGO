@@ -866,3 +866,111 @@ func (s *ChatService) GetBlacklist(qq int64) ([]model.BlockedUserInfo, error) {
 	return result, nil
 }
 
+func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64, groupID string, limit int) (*model.SearchResponse, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	escapedKeyword := escapeFTS5Keyword(keyword)
+
+	var messages []*model.Message
+	var err error
+
+	if groupID != "" {
+		err = s.db.Raw(`
+			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
+			FROM messages_fts f
+			JOIN messages m ON f.rowid = m.id
+			WHERE messages_fts MATCH ?
+			  AND m.group_id = ?
+			  AND m.msg_type IN (1, 2, 3)
+			  AND m.is_recalled = 0
+			ORDER BY rank
+			LIMIT ?
+		`, escapedKeyword, groupID, limit).Scan(&messages).Error
+	} else if targetQQ != 0 {
+		err = s.db.Raw(`
+			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
+			FROM messages_fts f
+			JOIN messages m ON f.rowid = m.id
+			WHERE messages_fts MATCH ?
+			  AND ((m.from_qq = ? AND m.to_qq = ?) OR (m.from_qq = ? AND m.to_qq = ?))
+			  AND m.group_id = ''
+			  AND m.msg_type IN (1, 2, 3)
+			  AND m.is_recalled = 0
+			ORDER BY rank
+			LIMIT ?
+		`, escapedKeyword, myQQ, targetQQ, targetQQ, myQQ, limit).Scan(&messages).Error
+	} else {
+		err = s.db.Raw(`
+			SELECT m.id, m.from_qq, m.to_qq, m.group_id, m.content, m.created_at
+			FROM messages_fts f
+			JOIN messages m ON f.rowid = m.id
+			WHERE messages_fts MATCH ?
+			  AND (m.from_qq = ? OR m.to_qq = ?)
+			  AND m.msg_type IN (1, 2, 3)
+			  AND m.is_recalled = 0
+			ORDER BY rank
+			LIMIT ?
+		`, escapedKeyword, myQQ, myQQ, limit).Scan(&messages).Error
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]model.SearchResultItem, 0, len(messages))
+	for _, m := range messages {
+		before, after := s.getContextMessages(m.ID, m, myQQ)
+		results = append(results, model.SearchResultItem{
+			MessageID:     m.ID,
+			FromQQ:        m.FromQQ,
+			ToQQ:          m.ToQQ,
+			GroupID:       m.GroupID,
+			Content:       m.Content,
+			CreatedAt:     m.CreatedAt,
+			ContextBefore: before,
+			ContextAfter:  after,
+		})
+	}
+
+	return &model.SearchResponse{
+		Keyword: keyword,
+		Total:   len(results),
+		Results: results,
+	}, nil
+}
+
+func escapeFTS5Keyword(keyword string) string {
+	return `"` + strings.ReplaceAll(keyword, `"`, `""`) + `"`
+}
+
+func (s *ChatService) getContextMessages(messageID int64, msg *model.Message, myQQ int64) (*model.HistoryMessage, *model.HistoryMessage) {
+	query := s.db.Table("messages").Where("msg_type IN ? AND is_recalled = ?", []int{1, 2, 3}, false)
+
+	if msg.GroupID != "" {
+		query = query.Where("group_id = ?", msg.GroupID)
+	} else {
+		query = query.Where(
+			"((from_qq = ? AND to_qq = ?) OR (from_qq = ? AND to_qq = ?)) AND group_id = ''",
+			msg.FromQQ, msg.ToQQ, msg.ToQQ, msg.FromQQ,
+		)
+	}
+
+	var before model.HistoryMessage
+	errBefore := query.Where("id < ?", messageID).Order("id DESC").Limit(1).First(&before).Error
+
+	var after model.HistoryMessage
+	errAfter := query.Where("id > ?", messageID).Order("id ASC").Limit(1).First(&after).Error
+
+	var resultBefore, resultAfter *model.HistoryMessage
+	if errBefore == nil {
+		resultBefore = &before
+	}
+	if errAfter == nil {
+		resultAfter = &after
+	}
+
+	return resultBefore, resultAfter
+}
+
