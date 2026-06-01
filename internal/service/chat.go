@@ -870,6 +870,9 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 	if limit <= 0 {
 		limit = 50
 	}
+	if limit > 100 {
+		limit = 100
+	}
 
 	escapedKeyword := escapeFTS5Keyword(keyword)
 
@@ -919,6 +922,9 @@ func (s *ChatService) SearchMessages(myQQ int64, keyword string, targetQQ int64,
 		return nil, err
 	}
 
+	// For each matched message, fetch context (before/after).
+	// With limit capped at 100, this results in at most 200 additional queries.
+	// Acceptable tradeoff for search feature; can be optimized to batch query if needed.
 	results := make([]model.SearchResultItem, 0, len(messages))
 	for _, m := range messages {
 		before, after := s.getContextMessages(m.ID, m, myQQ)
