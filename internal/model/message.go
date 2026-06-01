@@ -37,6 +37,8 @@ const (
 	MsgTypeHistory           MessageType = 312
 	MsgTypeSessionList       MessageType = 313
 	MsgTypeGroupHistory      MessageType = 314
+	MsgTypeSearchMessages    MessageType = 315
+	MsgTypeSearchResults     MessageType = 316
 	MsgTypeGroupCreate       MessageType = 200
 	MsgTypeGroupJoin        MessageType = 201
 	MsgTypeGroupLeave       MessageType = 202
@@ -154,9 +156,11 @@ type CheckUserResponse struct {
 }
 
 type HistoryRequest struct {
-	TargetQQ int64 `json:"target_qq"`
-	Offset   int   `json:"offset"`
-	Limit    int   `json:"limit"`
+	TargetQQ int64  `json:"target_qq"`
+	Offset   int    `json:"offset"`
+	Limit    int    `json:"limit"`
+	FromTime string `json:"from_time,omitempty"`
+	ToTime   string `json:"to_time,omitempty"`
 }
 
 type GroupHistoryRequest struct {
@@ -266,4 +270,28 @@ type RecallNotify struct {
 	MessageID int64  `json:"message_id"`
 	FromQQ    int64  `json:"from_qq"`
 	GroupID   string `json:"group_id,omitempty"`
+}
+
+type SearchRequest struct {
+	Keyword  string `json:"keyword"`
+	TargetQQ int64  `json:"target_qq,omitempty"`
+	GroupID  string `json:"group_id,omitempty"`
+	Limit    int    `json:"limit"`
+}
+
+type SearchResultItem struct {
+	MessageID     int64           `json:"message_id"`
+	FromQQ        int64           `json:"from_qq"`
+	ToQQ          int64           `json:"to_qq"`
+	GroupID       string          `json:"group_id"`
+	Content       string          `json:"content"`
+	CreatedAt     time.Time       `json:"created_at"`
+	ContextBefore *HistoryMessage `json:"context_before,omitempty"`
+	ContextAfter  *HistoryMessage `json:"context_after,omitempty"`
+}
+
+type SearchResponse struct {
+	Keyword string             `json:"keyword"`
+	Total   int                `json:"total"`
+	Results []SearchResultItem `json:"results"`
 }
