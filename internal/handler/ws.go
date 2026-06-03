@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,8 +10,10 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/qqgo/server/internal/model"
+	pb "github.com/qqgo/server/internal/protocol"
 	"github.com/qqgo/server/internal/service"
 	ws "github.com/qqgo/server/pkg/websocket"
+	"google.golang.org/protobuf/proto"
 )
 
 var upgrader = websocket.Upgrader{
@@ -43,8 +44,8 @@ type Hub struct {
 	pubsubRouter interface {
 		Subscribe(channels ...string)
 		Unsubscribe(channels ...string)
-		PublishToUser(qq int64, msg *model.Message)
-		PublishToGroup(groupID string, msg *model.Message)
+		PublishToUser(qq int64, msg *pb.WireMessage)
+		PublishToGroup(groupID string, msg *pb.WireMessage)
 	}
 	instanceID string
 }
@@ -92,6 +93,8 @@ type Service interface {
 	MarkRead(messageID int64) error
 	RecallMessage(qq int64, messageID int64) error
 	SearchMessages(myQQ int64, keyword string, targetQQ int64, groupID string, limit int) (*model.SearchResponse, error)
+	BackupDB() ([]byte, string, error)
+	CleanMessages(days int) (int64, error)
 }
 
 func NewHub(svc Service, onStatus func(int64, bool), maxConns int, rl interface {
@@ -105,8 +108,8 @@ func NewHub(svc Service, onStatus func(int64, bool), maxConns int, rl interface 
 }, ps interface {
 	Subscribe(channels ...string)
 	Unsubscribe(channels ...string)
-	PublishToUser(qq int64, msg *model.Message)
-	PublishToGroup(groupID string, msg *model.Message)
+	PublishToUser(qq int64, msg *pb.WireMessage)
+	PublishToGroup(groupID string, msg *pb.WireMessage)
 }, instanceID string) *Hub {
 	return &Hub{
 		conns:         make(map[int64]*ws.Conn),
@@ -124,8 +127,8 @@ func NewHub(svc Service, onStatus func(int64, bool), maxConns int, rl interface 
 func (h *Hub) SetPubSubRouter(ps interface {
 	Subscribe(channels ...string)
 	Unsubscribe(channels ...string)
-	PublishToUser(qq int64, msg *model.Message)
-	PublishToGroup(groupID string, msg *model.Message)
+	PublishToUser(qq int64, msg *pb.WireMessage)
+	PublishToGroup(groupID string, msg *pb.WireMessage)
 }) {
 	h.pubsubRouter = ps
 }
@@ -156,7 +159,7 @@ func (h *Hub) handleConnection(c *ws.Conn) {
 
 	go c.WriteLoop()
 	c.ReadLoop(func(msgType int, data []byte) {
-		if msgType != websocket.TextMessage {
+		if msgType != websocket.BinaryMessage {
 			return
 		}
 		h.dispatch(c, data)
@@ -169,117 +172,130 @@ func (h *Hub) handleConnection(c *ws.Conn) {
 }
 
 func (h *Hub) dispatch(c *ws.Conn, data []byte) {
-	var msg model.Message
-	if err := json.Unmarshal(data, &msg); err != nil {
+	var wire pb.WireMessage
+	if err := proto.Unmarshal(data, &wire); err != nil {
 		log.Printf("[dispatch] unmarshal error from %d: %v", c.QQ, err)
 		return
 	}
 
 	if c.QQ != 0 && h.rateLimiter != nil {
-		switch msg.MsgType {
-		case model.MsgTypeLogin, model.MsgTypeRegister, model.MsgTypeHeartbeat:
+		switch wire.Payload.(type) {
+		case *pb.WireMessage_LoginRequest, *pb.WireMessage_RegisterRequest, *pb.WireMessage_Heartbeat:
 		default:
 			if !h.rateLimiter.Allow(c.QQ) {
 				log.Printf("[ratelimit] qq=%d exceeded rate limit", c.QQ)
-				c.WriteJSON(&model.Message{
-					MsgType:   model.MsgTypeServerAck,
-					ID:        -1,
-					ClientSeq: msg.ClientSeq,
-					Content:   "rate limit exceeded",
-				})
+				h.writeServerAck(c, -1, wire.ClientSeq, "rate limit exceeded")
 				return
 			}
 		}
 	}
 
-	switch msg.MsgType {
-	case model.MsgTypeLogin:
-		h.handleLogin(c, &msg)
-	case model.MsgTypeRegister:
-		h.handleRegister(c, &msg)
-	case model.MsgTypeRefreshToken:
-		h.handleRefreshToken(c, &msg)
-	case model.MsgTypeHeartbeat:
+	switch p := wire.Payload.(type) {
+	case *pb.WireMessage_LoginRequest:
+		h.handleLogin(c, &wire, p.LoginRequest)
+	case *pb.WireMessage_RegisterRequest:
+		h.handleRegister(c, &wire, p.RegisterRequest)
+	case *pb.WireMessage_RefreshTokenRequest:
+		h.handleRefreshToken(c, &wire, p.RefreshTokenRequest)
+	case *pb.WireMessage_Heartbeat:
 		h.handleHeartbeat(c)
-	case model.MsgTypeDelivered:
-		h.handleDeliveredAck(c, &msg)
-	case model.MsgTypeFriendRequest:
-		h.handleFriendRequest(c, &msg)
-	case model.MsgTypeFriendAccept:
-		h.handleFriendAccept(c, &msg)
-	case model.MsgTypeFriendReject:
-		h.handleFriendReject(c, &msg)
-	case model.MsgTypeFriendDelete:
-		h.handleFriendDelete(c, &msg)
-	case model.MsgTypeFriendList:
-		h.handleFriendList(c, &msg)
-	case model.MsgTypeFriendSearch:
-		h.handleFriendSearch(c, &msg)
-	case model.MsgTypeFriendMoveGroup:
-		h.handleFriendMoveGroup(c, &msg)
-	case model.MsgTypeFriendRemark:
-		h.handleFriendRemark(c, &msg)
-	case model.MsgTypeFriendGroups:
-		h.handleFriendGroups(c, &msg)
-	case model.MsgTypeFriendCreateGroup:
-		h.handleFriendCreateGroup(c, &msg)
-	case model.MsgTypeFriendDeleteGroup:
-		h.handleFriendDeleteGroup(c, &msg)
-	case model.MsgTypeCheckUser:
-		h.handleCheckUser(c, &msg)
-	case model.MsgTypeHistory:
-		h.handleHistory(c, &msg)
-	case model.MsgTypeGroupHistory:
-		h.handleGroupHistory(c, &msg)
-	case model.MsgTypeSearchMessages:
-		h.handleSearchMessages(c, &msg)
-	case model.MsgTypeSessionList:
-		h.handleSessionList(c, &msg)
-	case model.MsgTypeGroupCreate:
-		h.handleGroupCreate(c, &msg)
-	case model.MsgTypeGroupJoin:
-		h.handleGroupJoin(c, &msg)
-	case model.MsgTypeGroupLeave:
-		h.handleGroupLeave(c, &msg)
-	case model.MsgTypeGroupList:
-		h.handleGroupList(c, &msg)
-	case model.MsgTypeGroupInfo:
-		h.handleGroupInfo(c, &msg)
-	case model.MsgTypeText, model.MsgTypeImage, model.MsgTypeFile:
-		h.handleChatMessage(c, &msg)
-	case model.MsgTypeChangePassword:
-		h.handleChangePassword(c, &msg)
-	case model.MsgTypeBlockUser:
-		h.handleBlockUser(c, &msg)
-	case model.MsgTypeUnblockUser:
-		h.handleUnblockUser(c, &msg)
-	case model.MsgTypeBlacklist:
-		h.handleBlacklist(c, &msg)
-	case model.MsgTypeReadReceipt:
-		h.handleReadReceipt(c, &msg)
-	case model.MsgTypeRecall:
-		h.handleRecall(c, &msg)
+	case *pb.WireMessage_DeliveredAck:
+		h.handleDeliveredAck(c, p.DeliveredAck)
+	case *pb.WireMessage_FriendRequest:
+		h.handleFriendRequest(c, p.FriendRequest)
+	case *pb.WireMessage_FriendAccept:
+		h.handleFriendAccept(c, p.FriendAccept)
+	case *pb.WireMessage_FriendReject:
+		h.handleFriendReject(c, p.FriendReject)
+	case *pb.WireMessage_FriendDelete:
+		h.handleFriendDelete(c, p.FriendDelete)
+	case *pb.WireMessage_FriendListRequest:
+		h.handleFriendList(c)
+	case *pb.WireMessage_FriendSearchRequest:
+		h.handleFriendSearch(c, p.FriendSearchRequest)
+	case *pb.WireMessage_FriendMoveGroup:
+		h.handleFriendMoveGroup(c, p.FriendMoveGroup)
+	case *pb.WireMessage_FriendRemark:
+		h.handleFriendRemark(c, p.FriendRemark)
+	case *pb.WireMessage_FriendGroupsRequest:
+		h.handleFriendGroups(c)
+	case *pb.WireMessage_FriendCreateGroup:
+		h.handleFriendCreateGroup(c, p.FriendCreateGroup)
+	case *pb.WireMessage_FriendDeleteGroup:
+		h.handleFriendDeleteGroup(c, p.FriendDeleteGroup)
+	case *pb.WireMessage_CheckUserRequest:
+		h.handleCheckUser(c, p.CheckUserRequest)
+	case *pb.WireMessage_HistoryRequest:
+		h.handleHistory(c, p.HistoryRequest)
+	case *pb.WireMessage_GroupHistoryRequest:
+		h.handleGroupHistory(c, p.GroupHistoryRequest)
+	case *pb.WireMessage_SearchMessagesRequest:
+		h.handleSearchMessages(c, p.SearchMessagesRequest)
+	case *pb.WireMessage_SessionListRequest:
+		h.handleSessionList(c)
+	case *pb.WireMessage_GroupCreateRequest:
+		h.handleGroupCreate(c, p.GroupCreateRequest)
+	case *pb.WireMessage_GroupJoinRequest:
+		h.handleGroupJoin(c, p.GroupJoinRequest)
+	case *pb.WireMessage_GroupLeaveRequest:
+		h.handleGroupLeave(c, p.GroupLeaveRequest)
+	case *pb.WireMessage_GroupListRequest:
+		h.handleGroupList(c)
+	case *pb.WireMessage_GroupInfoRequest:
+		h.handleGroupInfo(c, p.GroupInfoRequest)
+	case *pb.WireMessage_TextMessage:
+		h.handleChatMessage(c, &wire, p.TextMessage)
+	case *pb.WireMessage_FileMessage:
+		h.handleFileMessage(c, &wire, p.FileMessage)
+	case *pb.WireMessage_ChangePasswordRequest:
+		h.handleChangePassword(c, p.ChangePasswordRequest)
+	case *pb.WireMessage_BlockUserRequest:
+		h.handleBlockUser(c, p.BlockUserRequest)
+	case *pb.WireMessage_UnblockUserRequest:
+		h.handleUnblockUser(c, p.UnblockUserRequest)
+	case *pb.WireMessage_BlacklistRequest:
+		h.handleBlacklist(c)
+	case *pb.WireMessage_ReadReceipt:
+		h.handleReadReceipt(c, p.ReadReceipt)
+	case *pb.WireMessage_RecallRequest:
+		h.handleRecall(c, &wire, p.RecallRequest)
+	case *pb.WireMessage_BackupRequest:
+		h.handleBackup(c)
+	case *pb.WireMessage_CleanRequest:
+		h.handleClean(c, p.CleanRequest)
 	default:
-		log.Printf("[dispatch] unknown msgType=%d", msg.MsgType)
+		log.Printf("[dispatch] unknown payload type %T", wire.Payload)
 	}
 }
 
-func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
-	var req model.RegisterRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeRegisterAck(c, &model.RegisterResponse{Code: 400, Message: "invalid register payload"}, 0)
-		return
-	}
+func (h *Hub) writeWire(c *ws.Conn, wire *pb.WireMessage) {
+	c.WriteProto(wire)
+}
 
+func (h *Hub) writeServerAck(c *ws.Conn, id int64, clientSeq int64, content string) {
+	h.writeWire(c, &pb.WireMessage{
+		Id:        id,
+		ClientSeq: clientSeq,
+		Payload:   &pb.WireMessage_ServerAck{ServerAck: &pb.ServerAck{Content: content}},
+	})
+}
+
+func (h *Hub) writeError(c *ws.Conn, errMsg string) {
+	h.writeWire(c, &pb.WireMessage{
+		Payload: &pb.WireMessage_ServerAck{ServerAck: &pb.ServerAck{Content: errMsg}},
+	})
+}
+
+func (h *Hub) handleRegister(c *ws.Conn, wire *pb.WireMessage, req *pb.RegisterRequest) {
 	qqNumber, err := h.svc.Register(req.Nickname, req.Password)
 	if err != nil {
 		log.Printf("[register] failed: %v", err)
-		h.writeRegisterAck(c, &model.RegisterResponse{Code: 400, Message: err.Error()}, 0)
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_RegisterResponse{RegisterResponse: &pb.RegisterResponse{Code: 400, Message: err.Error()}}})
 		return
 	}
 
 	log.Printf("[register] success qq=%d", qqNumber)
-	h.writeRegisterAck(c, &model.RegisterResponse{Code: 0, Message: "register ok", QQNumber: qqNumber}, qqNumber)
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_RegisterResponse{RegisterResponse: &pb.RegisterResponse{Code: 0, Message: "register ok", QqNumber: qqNumber}}})
 
 	accessToken, refreshToken, err := h.svc.Login(qqNumber, req.Password)
 	if err != nil {
@@ -303,7 +319,10 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 		h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", qqNumber))
 	}
 
-	h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken, Online: h.Count(), QQNumber: qqNumber, Nickname: req.Nickname})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_LoginResponse{LoginResponse: &pb.LoginResponse{
+		Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken,
+		Online: int32(h.Count()), QqNumber: qqNumber, Nickname: req.Nickname,
+	}}})
 
 	if h.onStatus != nil {
 		h.onStatus(qqNumber, true)
@@ -312,245 +331,249 @@ func (h *Hub) handleRegister(c *ws.Conn, msg *model.Message) {
 	go h.pushOfflineMessages(qqNumber)
 }
 
-func (h *Hub) writeRegisterAck(c *ws.Conn, resp *model.RegisterResponse, qqNumber int64) {
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeRegisterAck,
-		Content: string(payload),
-	})
-}
-
-func (h *Hub) handleLogin(c *ws.Conn, msg *model.Message) {
-	var req model.LoginRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeLoginAck(c, &model.LoginResponse{Code: 400, Message: "invalid login payload"})
-		return
-	}
-
-	log.Printf("[login] attempting qq=%d", req.QQ)
+func (h *Hub) handleLogin(c *ws.Conn, wire *pb.WireMessage, req *pb.LoginRequest) {
+	log.Printf("[login] attempting qq=%d", req.Qq)
 
 	if req.Password != "" {
-		accessToken, refreshToken, err := h.svc.Login(req.QQ, req.Password)
+		accessToken, refreshToken, err := h.svc.Login(req.Qq, req.Password)
 		if err != nil {
-			log.Printf("[login] auth failed for qq=%d: %v", req.QQ, err)
-			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: "auth failed"})
+			log.Printf("[login] auth failed for qq=%d: %v", req.Qq, err)
+			h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_LoginResponse{LoginResponse: &pb.LoginResponse{Code: 401, Message: "auth failed"}}})
 			return
 		}
 
-		user, _ := h.svc.GetUserByQQ(req.QQ)
+		user, _ := h.svc.GetUserByQQ(req.Qq)
 		nickname := ""
 		if user != nil {
 			nickname = user.Nickname
 		}
 
 		h.mu.Lock()
-		if oldConn, ok := h.conns[req.QQ]; ok {
+		if oldConn, ok := h.conns[req.Qq]; ok {
 			oldConn.Close()
 		}
-		c.QQ = req.QQ
+		c.QQ = req.Qq
 		c.Platform = req.Platform
-		h.conns[req.QQ] = c
+		h.conns[req.Qq] = c
 		h.mu.Unlock()
 
 		if h.onlineTracker != nil {
-			h.onlineTracker.SetOnline(req.QQ)
+			h.onlineTracker.SetOnline(req.Qq)
 		}
 		if h.pubsubRouter != nil {
-			h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", req.QQ))
+			h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", req.Qq))
 		}
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_LoginResponse{LoginResponse: &pb.LoginResponse{
+			Code: 0, Message: "ok", AccessToken: accessToken, RefreshToken: refreshToken,
+			Online: int32(h.Count()), QqNumber: req.Qq, Nickname: nickname,
+		}}})
 
 		if h.onStatus != nil {
-			h.onStatus(req.QQ, true)
+			h.onStatus(req.Qq, true)
 		}
 
-		log.Printf("[login] qq=%d login, online: %d", req.QQ, h.Count())
-		go h.pushOfflineMessages(req.QQ)
+		log.Printf("[login] qq=%d login, online: %d", req.Qq, h.Count())
+		go h.pushOfflineMessages(req.Qq)
 		return
 	}
 
 	if req.Token != "" {
-		valid, err := h.svc.LoginWithToken(req.QQ, req.Token)
+		valid, err := h.svc.LoginWithToken(req.Qq, req.Token)
 		if err != nil || !valid {
 			msg := "auth failed"
 			if err == service.ErrTokenExpired {
 				msg = "token expired"
 			}
-			h.writeLoginAck(c, &model.LoginResponse{Code: 401, Message: msg})
+			h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_LoginResponse{LoginResponse: &pb.LoginResponse{Code: 401, Message: msg}}})
 			return
 		}
 
-		user, _ := h.svc.GetUserByQQ(req.QQ)
+		user, _ := h.svc.GetUserByQQ(req.Qq)
 		nickname := ""
 		if user != nil {
 			nickname = user.Nickname
 		}
 
 		h.mu.Lock()
-		if oldConn, ok := h.conns[req.QQ]; ok {
+		if oldConn, ok := h.conns[req.Qq]; ok {
 			oldConn.Close()
 		}
-		c.QQ = req.QQ
+		c.QQ = req.Qq
 		c.Platform = req.Platform
-		h.conns[req.QQ] = c
+		h.conns[req.Qq] = c
 		h.mu.Unlock()
 
 		if h.onlineTracker != nil {
-			h.onlineTracker.SetOnline(req.QQ)
+			h.onlineTracker.SetOnline(req.Qq)
 		}
 		if h.pubsubRouter != nil {
-			h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", req.QQ))
+			h.pubsubRouter.Subscribe(fmt.Sprintf("ch:qq:%d", req.Qq))
 		}
 
-		h.writeLoginAck(c, &model.LoginResponse{Code: 0, Message: "ok", AccessToken: req.Token, Online: h.Count(), QQNumber: req.QQ, Nickname: nickname})
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_LoginResponse{LoginResponse: &pb.LoginResponse{
+			Code: 0, Message: "ok", AccessToken: req.Token,
+			Online: int32(h.Count()), QqNumber: req.Qq, Nickname: nickname,
+		}}})
 
 		if h.onStatus != nil {
-			h.onStatus(req.QQ, true)
+			h.onStatus(req.Qq, true)
 		}
 
-		log.Printf("[login] qq=%d login via token, online: %d", req.QQ, h.Count())
-		go h.pushOfflineMessages(req.QQ)
+		log.Printf("[login] qq=%d login via token, online: %d", req.Qq, h.Count())
+		go h.pushOfflineMessages(req.Qq)
 		return
 	}
 
-	h.writeLoginAck(c, &model.LoginResponse{Code: 400, Message: "password or token required"})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_LoginResponse{LoginResponse: &pb.LoginResponse{Code: 400, Message: "password or token required"}}})
 }
 
-func (h *Hub) handleRefreshToken(c *ws.Conn, msg *model.Message) {
-	var req model.RefreshTokenRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeRefreshTokenAck(c, &model.RefreshTokenResponse{Code: 400, Message: "invalid payload"})
-		return
-	}
-
-	newAccessToken, err := h.svc.RefreshToken(req.QQ, req.RefreshToken)
+func (h *Hub) handleRefreshToken(c *ws.Conn, wire *pb.WireMessage, req *pb.RefreshTokenRequest) {
+	newAccessToken, err := h.svc.RefreshToken(req.Qq, req.RefreshToken)
 	if err != nil {
 		msg := "refresh token expired"
 		if err == service.ErrInvalidToken {
 			msg = "auth failed"
 		}
-		h.writeRefreshTokenAck(c, &model.RefreshTokenResponse{Code: 401, Message: msg})
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_RefreshTokenResponse{RefreshTokenResponse: &pb.RefreshTokenResponse{Code: 401, Message: msg}}})
 		return
 	}
 
-	h.writeRefreshTokenAck(c, &model.RefreshTokenResponse{
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_RefreshTokenResponse{RefreshTokenResponse: &pb.RefreshTokenResponse{
 		Code: 0, Message: "ok", AccessToken: newAccessToken,
-	})
-}
-
-func (h *Hub) writeRefreshTokenAck(c *ws.Conn, resp *model.RefreshTokenResponse) {
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeRefreshTokenAck,
-		Content: string(payload),
-	})
-}
-
-func (h *Hub) writeLoginAck(c *ws.Conn, resp *model.LoginResponse) {
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeLoginAck,
-		Content: string(payload),
-	})
+	}}})
 }
 
 func (h *Hub) handleHeartbeat(c *ws.Conn) {
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeHeartbeat,
-		Content: "pong",
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_Heartbeat{Heartbeat: &pb.Heartbeat{Content: "pong"}}})
 	if c.QQ != 0 && h.onlineTracker != nil {
 		h.onlineTracker.RefreshOnline(c.QQ)
 	}
 }
 
-func (h *Hub) handleChatMessage(c *ws.Conn, msg *model.Message) {
-	msg.FromQQ = c.QQ
-
-	if msg.GroupID == "" {
-		if _, err := h.svc.GetUserByQQ(msg.ToQQ); err != nil {
-			log.Printf("[chat] target QQ %d not found", msg.ToQQ)
-			c.WriteJSON(&model.Message{
-				MsgType:   model.MsgTypeServerAck,
-				ID:        -1,
-				ClientSeq: msg.ClientSeq,
-				Content:   "user not found",
-			})
+func (h *Hub) handleChatMessage(c *ws.Conn, wire *pb.WireMessage, text *pb.TextMessage) {
+	if wire.GroupId == "" {
+		if _, err := h.svc.GetUserByQQ(wire.ToQq); err != nil {
+			log.Printf("[chat] target QQ %d not found", wire.ToQq)
+			h.writeServerAck(c, -1, wire.ClientSeq, "user not found")
 			return
 		}
 
-		if h.svc.IsBlocked(msg.ToQQ, c.QQ) {
-			log.Printf("[chat] qq=%d has blocked qq=%d", msg.ToQQ, c.QQ)
-			c.WriteJSON(&model.Message{
-				MsgType:   model.MsgTypeServerAck,
-				ID:        -1,
-				ClientSeq: msg.ClientSeq,
-				Content:   "you are blocked by the recipient",
-			})
+		if h.svc.IsBlocked(wire.ToQq, c.QQ) {
+			log.Printf("[chat] qq=%d has blocked qq=%d", wire.ToQq, c.QQ)
+			h.writeServerAck(c, -1, wire.ClientSeq, "you are blocked by the recipient")
 			return
 		}
 
-		if err := h.svc.CheckAndIncrementNonFriendMessage(c.QQ, msg.ToQQ); err != nil {
-			log.Printf("[chat] non-friend msg limit: from=%d to=%d err=%v", c.QQ, msg.ToQQ, err)
-			c.WriteJSON(&model.Message{
-				MsgType:   model.MsgTypeServerAck,
-				ID:        -1,
-				ClientSeq: msg.ClientSeq,
-				Content:   err.Error(),
-			})
+		if err := h.svc.CheckAndIncrementNonFriendMessage(c.QQ, wire.ToQq); err != nil {
+			log.Printf("[chat] non-friend msg limit: from=%d to=%d err=%v", c.QQ, wire.ToQq, err)
+			h.writeServerAck(c, -1, wire.ClientSeq, err.Error())
 			return
 		}
 	} else {
-		if !h.svc.IsGroupMember(msg.GroupID, c.QQ) {
-			log.Printf("[chat] qq=%d not member of group %s", c.QQ, msg.GroupID)
-			c.WriteJSON(&model.Message{
-				MsgType:   model.MsgTypeServerAck,
-				ID:        -1,
-				ClientSeq: msg.ClientSeq,
-				Content:   "not group member",
-			})
+		if !h.svc.IsGroupMember(wire.GroupId, c.QQ) {
+			log.Printf("[chat] qq=%d not member of group %s", c.QQ, wire.GroupId)
+			h.writeServerAck(c, -1, wire.ClientSeq, "not group member")
 			return
 		}
+	}
+
+	msg := &model.Message{
+		MsgType: model.MsgTypeText,
+		FromQQ:  c.QQ,
+		ToQQ:    wire.ToQq,
+		GroupID: wire.GroupId,
+		Content: text.Content,
 	}
 
 	if err := h.svc.HandleMessage(context.Background(), msg); err != nil {
 		log.Printf("[chat] store error: %v", err)
-		c.WriteJSON(&model.Message{
-			MsgType: model.MsgTypeServerAck,
-			ID:      -1,
-			Content: "store failed",
-		})
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_ServerAck{ServerAck: &pb.ServerAck{Content: "store failed"}}})
 		return
 	}
 
-	c.WriteJSON(&model.Message{
-		MsgType:   model.MsgTypeServerAck,
-		ID:        msg.ID,
-		ClientSeq: msg.ClientSeq,
-		Content:   "ok",
-	})
+	h.writeServerAck(c, msg.ID, wire.ClientSeq, "ok")
 
-	if msg.GroupID != "" {
-		h.broadcastToGroup(msg)
+	outWire := &pb.WireMessage{
+		Id:       msg.ID,
+		FromQq:   c.QQ,
+		ToQq:     wire.ToQq,
+		GroupId:  wire.GroupId,
+		CreatedAt: msg.CreatedAt.Unix(),
+		Payload:  &pb.WireMessage_TextMessage{TextMessage: text},
+	}
+
+	if wire.GroupId != "" {
+		h.broadcastToGroup(outWire)
 	} else {
-		h.sendToUser(msg.ToQQ, msg)
+		h.sendToUser(wire.ToQq, outWire)
 	}
 }
 
-func (h *Hub) handleDeliveredAck(c *ws.Conn, msg *model.Message) {
-	var ack model.AckRequest
-	if err := json.Unmarshal([]byte(msg.Content), &ack); err != nil {
-		log.Printf("[delivered] parse ack error: %v", err)
+func (h *Hub) handleFileMessage(c *ws.Conn, wire *pb.WireMessage, file *pb.FileMessage) {
+	if wire.GroupId == "" {
+		if _, err := h.svc.GetUserByQQ(wire.ToQq); err != nil {
+			h.writeServerAck(c, -1, wire.ClientSeq, "user not found")
+			return
+		}
+
+		if h.svc.IsBlocked(wire.ToQq, c.QQ) {
+			h.writeServerAck(c, -1, wire.ClientSeq, "you are blocked by the recipient")
+			return
+		}
+
+		if err := h.svc.CheckAndIncrementNonFriendMessage(c.QQ, wire.ToQq); err != nil {
+			h.writeServerAck(c, -1, wire.ClientSeq, err.Error())
+			return
+		}
+	} else {
+		if !h.svc.IsGroupMember(wire.GroupId, c.QQ) {
+			h.writeServerAck(c, -1, wire.ClientSeq, "not group member")
+			return
+		}
+	}
+
+	msgType := model.MsgTypeFile
+	content := fmt.Sprintf(`{"filename":"%s","size":%d,"data":"%s"}`, file.Filename, file.Size, string(file.Data))
+
+	msg := &model.Message{
+		MsgType: msgType,
+		FromQQ:  c.QQ,
+		ToQQ:    wire.ToQq,
+		GroupID: wire.GroupId,
+		Content: content,
+	}
+
+	if err := h.svc.HandleMessage(context.Background(), msg); err != nil {
+		log.Printf("[chat] store error: %v", err)
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_ServerAck{ServerAck: &pb.ServerAck{Content: "store failed"}}})
 		return
 	}
 
-	if err := h.svc.MarkDelivered(ack.MessageID); err != nil {
+	h.writeServerAck(c, msg.ID, wire.ClientSeq, "ok")
+
+	outWire := &pb.WireMessage{
+		Id:       msg.ID,
+		FromQq:   c.QQ,
+		ToQq:     wire.ToQq,
+		GroupId:  wire.GroupId,
+		CreatedAt: msg.CreatedAt.Unix(),
+		Payload:  &pb.WireMessage_FileMessage{FileMessage: file},
+	}
+
+	if wire.GroupId != "" {
+		h.broadcastToGroup(outWire)
+	} else {
+		h.sendToUser(wire.ToQq, outWire)
+	}
+}
+
+func (h *Hub) handleDeliveredAck(c *ws.Conn, ack *pb.DeliveredAck) {
+	if err := h.svc.MarkDelivered(ack.MessageId); err != nil {
 		log.Printf("[delivered] mark error: %v", err)
 		return
 	}
-
-	log.Printf("[delivered] message id=%d marked delivered", ack.MessageID)
+	log.Printf("[delivered] message id=%d marked delivered", ack.MessageId)
 }
 
 func (h *Hub) isOnline(qq int64) bool {
@@ -560,260 +583,203 @@ func (h *Hub) isOnline(qq int64) bool {
 	return ok
 }
 
-func (h *Hub) handleFriendRequest(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendRequest(c *ws.Conn, req *pb.FriendRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req model.FriendRequestPayload
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.SendFriendRequest(c.QQ, req.ToQqNumber, req.Message); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.SendFriendRequest(c.QQ, req.ToQQNumber, req.Message); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	log.Printf("[friend] request from qq=%d to qq=%d", c.QQ, req.ToQQNumber)
-	h.writeFriendResult(c, "friend request sent")
-	h.notifyFriendRequest(c.QQ, req.ToQQNumber, req.Message)
+	log.Printf("[friend] request from qq=%d to qq=%d", c.QQ, req.ToQqNumber)
+	h.writeError(c, "friend request sent")
+	h.notifyFriendRequest(c.QQ, req.ToQqNumber, req.Message)
 }
 
-func (h *Hub) handleFriendAccept(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendAccept(c *ws.Conn, req *pb.FriendAccept) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req model.FriendRequestPayload
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.AcceptFriend(c.QQ, req.ToQqNumber); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.AcceptFriend(c.QQ, req.ToQQNumber); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	log.Printf("[friend] qq=%d accepted qq=%d", c.QQ, req.ToQQNumber)
-	h.writeFriendResult(c, "friend accepted")
-	h.notifyFriendAccepted(c.QQ, req.ToQQNumber)
+	log.Printf("[friend] qq=%d accepted qq=%d", c.QQ, req.ToQqNumber)
+	h.writeError(c, "friend accepted")
+	h.notifyFriendAccepted(c.QQ, req.ToQqNumber)
 }
 
-func (h *Hub) handleFriendReject(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendReject(c *ws.Conn, req *pb.FriendReject) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req model.FriendRequestPayload
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.RejectFriend(c.QQ, req.ToQqNumber); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.RejectFriend(c.QQ, req.ToQQNumber); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	log.Printf("[friend] qq=%d rejected qq=%d", c.QQ, req.ToQQNumber)
-	h.writeFriendResult(c, "friend request rejected")
+	log.Printf("[friend] qq=%d rejected qq=%d", c.QQ, req.ToQqNumber)
+	h.writeError(c, "friend request rejected")
 }
 
-func (h *Hub) handleFriendDelete(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendDelete(c *ws.Conn, req *pb.FriendDelete) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req model.FriendRequestPayload
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.DeleteFriend(c.QQ, req.ToQqNumber); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.DeleteFriend(c.QQ, req.ToQQNumber); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	log.Printf("[friend] qq=%d deleted friend qq=%d", c.QQ, req.ToQQNumber)
-	h.writeFriendResult(c, "friend deleted")
+	log.Printf("[friend] qq=%d deleted friend qq=%d", c.QQ, req.ToQqNumber)
+	h.writeError(c, "friend deleted")
 }
 
-func (h *Hub) handleFriendList(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendList(c *ws.Conn) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	list, err := h.svc.GetFriendList(c.QQ, h.isOnline)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
 	groups, _ := h.svc.GetFriendGroups(c.QQ)
 
-	resp := model.FriendListResponse{Friends: list, AllGroups: groups}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeFriendList,
-		Content: string(payload),
-	})
+	friends := make([]*pb.FriendInfo, 0, len(list))
+	for _, f := range list {
+		friends = append(friends, &pb.FriendInfo{
+			QqNumber: f.QQNumber, Nickname: f.Nickname, Remark: f.Remark,
+			GroupName: f.GroupName, Status: int32(f.Status), Online: f.Online,
+		})
+	}
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_FriendListResponse{FriendListResponse: &pb.FriendListResponse{
+		Friends: friends, AllGroups: groups,
+	}}})
 }
 
-func (h *Hub) handleFriendSearch(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendSearch(c *ws.Conn, req *pb.FriendSearchRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	keyword := msg.Content
-	results, err := h.svc.SearchUsers(keyword, h.isOnline)
+	results, err := h.svc.SearchUsers(req.Keyword, h.isOnline)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
-	payload, _ := json.Marshal(results)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeFriendSearch,
-		Content: string(payload),
-	})
+	pbResults := make([]*pb.UserSearchResult, 0, len(results))
+	for _, r := range results {
+		pbResults = append(pbResults, &pb.UserSearchResult{QqNumber: r.QQNumber, Nickname: r.Nickname, Online: r.Online})
+	}
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_FriendSearchResponse{FriendSearchResponse: &pb.FriendSearchResponse{
+		Results: pbResults,
+	}}})
 }
 
-func (h *Hub) handleFriendMoveGroup(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendMoveGroup(c *ws.Conn, req *pb.FriendMoveGroup) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req struct {
-		QQNumber  int64  `json:"qq_number"`
-		GroupName string `json:"group_name"`
-	}
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.MoveFriendGroup(c.QQ, req.QqNumber, req.GroupName); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.MoveFriendGroup(c.QQ, req.QQNumber, req.GroupName); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	h.writeFriendResult(c, "friend moved to "+req.GroupName)
+	h.writeError(c, "friend moved to "+req.GroupName)
 }
 
-func (h *Hub) handleFriendRemark(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendRemark(c *ws.Conn, req *pb.FriendRemark) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req struct {
-		QQNumber int64  `json:"qq_number"`
-		Remark   string `json:"remark"`
-	}
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.SetRemark(c.QQ, req.QqNumber, req.Remark); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.SetRemark(c.QQ, req.QQNumber, req.Remark); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	h.writeFriendResult(c, "remark updated")
+	h.writeError(c, "remark updated")
 }
 
-func (h *Hub) handleFriendGroups(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendGroups(c *ws.Conn) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	groups, err := h.svc.GetFriendGroups(c.QQ)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
-	resp := model.FriendGroupListResponse{Groups: groups}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeFriendGroups,
-		Content: string(payload),
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_FriendGroupsResponse{FriendGroupsResponse: &pb.FriendGroupsResponse{
+		Groups: groups,
+	}}})
 }
 
-func (h *Hub) handleFriendCreateGroup(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendCreateGroup(c *ws.Conn, req *pb.FriendCreateGroup) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
-	if err := h.svc.CreateFriendGroup(c.QQ, msg.Content); err != nil {
-		h.writeFriendError(c, err.Error())
+	if err := h.svc.CreateFriendGroup(c.QQ, req.Name); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
-	log.Printf("[friend] group created: qq=%d name=%s", c.QQ, msg.Content)
-	h.writeFriendResult(c, "group created")
+	log.Printf("[friend] group created: qq=%d name=%s", c.QQ, req.Name)
+	h.writeError(c, "group created")
 }
 
-func (h *Hub) handleFriendDeleteGroup(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleFriendDeleteGroup(c *ws.Conn, req *pb.FriendDeleteGroup) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
-	if err := h.svc.DeleteFriendGroup(c.QQ, msg.Content); err != nil {
-		h.writeFriendError(c, err.Error())
+	if err := h.svc.DeleteFriendGroup(c.QQ, req.Name); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
-	log.Printf("[friend] group deleted: qq=%d name=%s", c.QQ, msg.Content)
-	h.writeFriendResult(c, "group deleted")
+	log.Printf("[friend] group deleted: qq=%d name=%s", c.QQ, req.Name)
+	h.writeError(c, "group deleted")
 }
 
-func (h *Hub) handleCheckUser(c *ws.Conn, msg *model.Message) {
-	qq, err := strconv.ParseInt(msg.Content, 10, 64)
+func (h *Hub) handleCheckUser(c *ws.Conn, req *pb.CheckUserRequest) {
+	user, err := h.svc.GetUserByQQ(req.Qq)
 	if err != nil {
-		payload, _ := json.Marshal(&model.CheckUserResponse{Code: 400, Message: "invalid QQ number"})
-		c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
+		h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_CheckUserResponse{CheckUserResponse: &pb.CheckUserResponse{Code: 404, Message: "user not found"}}})
 		return
 	}
 
-	user, err := h.svc.GetUserByQQ(qq)
-	if err != nil {
-		payload, _ := json.Marshal(&model.CheckUserResponse{Code: 404, Message: "user not found"})
-		c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
-		return
-	}
-
-	payload, _ := json.Marshal(&model.CheckUserResponse{
-		Code:     0,
-		Message:  "ok",
-		QQNumber: user.QQNumber,
-		Nickname: user.Nickname,
-		Online:   h.isOnline(user.QQNumber),
-	})
-	c.WriteJSON(&model.Message{MsgType: model.MsgTypeCheckUser, Content: string(payload)})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_CheckUserResponse{CheckUserResponse: &pb.CheckUserResponse{
+		Code: 0, Message: "ok", QqNumber: user.QQNumber, Nickname: user.Nickname, Online: h.isOnline(user.QQNumber),
+	}}})
 }
 
-func (h *Hub) handleHistory(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleHistory(c *ws.Conn, req *pb.HistoryRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
-		return
-	}
-
-	var req model.HistoryRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+		h.writeError(c, "not logged in")
 		return
 	}
 
@@ -821,53 +787,34 @@ func (h *Hub) handleHistory(c *ws.Conn, msg *model.Message) {
 		req.Limit = 30
 	}
 
-	targetUser, err := h.svc.GetUserByQQ(req.TargetQQ)
+	targetUser, err := h.svc.GetUserByQQ(req.TargetQq)
 	if err != nil {
-		h.writeFriendError(c, "user not found")
+		h.writeError(c, "user not found")
 		return
 	}
 
-	msgs, hasMore, err := h.svc.GetHistoryWithTarget(c.QQ, req.TargetQQ, req.Offset, req.Limit, req.FromTime, req.ToTime)
+	msgs, hasMore, err := h.svc.GetHistoryWithTarget(c.QQ, req.TargetQq, int(req.Offset), int(req.Limit), req.FromTime, req.ToTime)
 	if err != nil {
 		log.Printf("[history] query error: %v", err)
-		h.writeFriendError(c, "query failed")
+		h.writeError(c, "query failed")
 		return
 	}
 
-	historyMsgs := make([]model.HistoryMessage, 0, len(msgs))
+	historyMsgs := make([]*pb.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
-		historyMsgs = append(historyMsgs, model.HistoryMessage{
-			ID:        m.ID,
-			FromQQ:    m.FromQQ,
-			ToQQ:      m.ToQQ,
-			Content:   m.Content,
-			CreatedAt: m.CreatedAt,
+		historyMsgs = append(historyMsgs, &pb.HistoryMessage{
+			Id: m.ID, FromQq: m.FromQQ, ToQq: m.ToQQ, Content: m.Content, CreatedAt: m.CreatedAt.Unix(),
 		})
 	}
 
-	resp := model.HistoryResponse{
-		TargetQQ: req.TargetQQ,
-		Nickname: targetUser.Nickname,
-		Messages: historyMsgs,
-		Offset:   req.Offset,
-		HasMore:  hasMore,
-	}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeHistory,
-		Content: string(payload),
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_HistoryResponse{HistoryResponse: &pb.HistoryResponse{
+		TargetQq: req.TargetQq, Nickname: targetUser.Nickname, Messages: historyMsgs, Offset: req.Offset, HasMore: hasMore,
+	}}})
 }
 
-func (h *Hub) handleGroupHistory(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleGroupHistory(c *ws.Conn, req *pb.GroupHistoryRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
-		return
-	}
-
-	var req model.GroupHistoryRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+		h.writeError(c, "not logged in")
 		return
 	}
 
@@ -875,231 +822,222 @@ func (h *Hub) handleGroupHistory(c *ws.Conn, msg *model.Message) {
 		req.Limit = 30
 	}
 
-	if !h.svc.IsGroupMember(req.GroupID, c.QQ) {
-		h.writeFriendError(c, "not group member")
+	if !h.svc.IsGroupMember(req.GroupId, c.QQ) {
+		h.writeError(c, "not group member")
 		return
 	}
 
-	groupInfo, err := h.svc.GetGroupInfo(req.GroupID)
+	groupInfo, err := h.svc.GetGroupInfo(req.GroupId)
 	if err != nil {
-		h.writeFriendError(c, "group not found")
+		h.writeError(c, "group not found")
 		return
 	}
 
-	msgs, hasMore, err := h.svc.GetGroupHistory(req.GroupID, req.Offset, req.Limit)
+	msgs, hasMore, err := h.svc.GetGroupHistory(req.GroupId, int(req.Offset), int(req.Limit))
 	if err != nil {
 		log.Printf("[group-history] query error: %v", err)
-		h.writeFriendError(c, "query failed")
+		h.writeError(c, "query failed")
 		return
 	}
 
-	historyMsgs := make([]model.HistoryMessage, 0, len(msgs))
+	historyMsgs := make([]*pb.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
-		historyMsgs = append(historyMsgs, model.HistoryMessage{
-			ID:        m.ID,
-			FromQQ:    m.FromQQ,
-			ToQQ:      m.ToQQ,
-			Content:   m.Content,
-			CreatedAt: m.CreatedAt,
+		historyMsgs = append(historyMsgs, &pb.HistoryMessage{
+			Id: m.ID, FromQq: m.FromQQ, ToQq: m.ToQQ, Content: m.Content, CreatedAt: m.CreatedAt.Unix(),
 		})
 	}
 
-	resp := model.GroupHistoryResponse{
-		GroupID:   req.GroupID,
-		GroupName: groupInfo.Name,
-		Messages:  historyMsgs,
-		Offset:    req.Offset,
-		HasMore:   hasMore,
-	}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeGroupHistory,
-		Content: string(payload),
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_GroupHistoryResponse{GroupHistoryResponse: &pb.GroupHistoryResponse{
+		GroupId: req.GroupId, GroupName: groupInfo.Name, Messages: historyMsgs, Offset: req.Offset, HasMore: hasMore,
+	}}})
 }
 
-func (h *Hub) handleSessionList(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleSessionList(c *ws.Conn) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	sessions, err := h.svc.GetSessions(c.QQ, h.isOnline)
 	if err != nil {
 		log.Printf("[sessions] query error: %v", err)
-		h.writeFriendError(c, "query failed")
+		h.writeError(c, "query failed")
 		return
 	}
 
-	resp := model.SessionListResponse{Sessions: sessions}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeSessionList,
-		Content: string(payload),
-	})
+	pbSessions := make([]*pb.SessionInfo, 0, len(sessions))
+	for _, s := range sessions {
+		pbSessions = append(pbSessions, &pb.SessionInfo{
+			Type: s.Type, TargetQq: s.TargetQQ, GroupId: s.GroupID, Nickname: s.Nickname,
+			LastMessage: s.LastMessage, LastTime: s.LastTime.Unix(), Online: s.Online, UnreadCount: int32(s.UnreadCount),
+		})
+	}
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_SessionListResponse{SessionListResponse: &pb.SessionListResponse{
+		Sessions: pbSessions,
+	}}})
 }
 
-func (h *Hub) handleSearchMessages(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleSearchMessages(c *ws.Conn, req *pb.SearchMessagesRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
-		return
-	}
-
-	var req model.SearchRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	if req.Keyword == "" {
-		h.writeFriendError(c, "keyword is required")
+		h.writeError(c, "keyword is required")
 		return
 	}
 
-	resp, err := h.svc.SearchMessages(c.QQ, req.Keyword, req.TargetQQ, req.GroupID, req.Limit)
+	resp, err := h.svc.SearchMessages(c.QQ, req.Keyword, req.TargetQq, req.GroupId, int(req.Limit))
 	if err != nil {
 		log.Printf("[search] query error: %v", err)
-		h.writeFriendError(c, "search failed")
+		h.writeError(c, "search failed")
 		return
 	}
 
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeSearchResults,
-		Content: string(payload),
-	})
+	pbResults := make([]*pb.SearchResultItem, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		item := &pb.SearchResultItem{
+			MessageId: r.MessageID, FromQq: r.FromQQ, ToQq: r.ToQQ, GroupId: r.GroupID,
+			Content: r.Content, CreatedAt: r.CreatedAt.Unix(),
+		}
+		if r.ContextBefore != nil {
+			item.ContextBefore = &pb.HistoryMessage{
+				Id: r.ContextBefore.ID, FromQq: r.ContextBefore.FromQQ, ToQq: r.ContextBefore.ToQQ,
+				Content: r.ContextBefore.Content, CreatedAt: r.ContextBefore.CreatedAt.Unix(),
+			}
+		}
+		if r.ContextAfter != nil {
+			item.ContextAfter = &pb.HistoryMessage{
+				Id: r.ContextAfter.ID, FromQq: r.ContextAfter.FromQQ, ToQq: r.ContextAfter.ToQQ,
+				Content: r.ContextAfter.Content, CreatedAt: r.ContextAfter.CreatedAt.Unix(),
+			}
+		}
+		pbResults = append(pbResults, item)
+	}
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_SearchMessagesResponse{SearchMessagesResponse: &pb.SearchMessagesResponse{
+		Keyword: resp.Keyword, Total: int32(resp.Total), Results: pbResults,
+	}}})
 }
 
-func (h *Hub) handleGroupCreate(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleGroupCreate(c *ws.Conn, req *pb.GroupCreateRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
-		return
-	}
-
-	var req model.GroupCreateRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	if req.Name == "" {
-		h.writeFriendError(c, "group name required")
+		h.writeError(c, "group name required")
 		return
 	}
 
 	groupID, err := h.svc.CreateGroup(req.Name, c.QQ)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
 	h.JoinGroup(c.QQ, groupID)
 	log.Printf("[group] created group %s by qq=%d", groupID, c.QQ)
 
-	resp := map[string]interface{}{
-		"group_id": groupID,
-		"name":     req.Name,
-		"message":  "group created",
-	}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeGroupCreate,
-		Content: string(payload),
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_GroupCreateResponse{GroupCreateResponse: &pb.GroupCreateResponse{
+		GroupId: groupID, Name: req.Name, Message: "group created",
+	}}})
 }
 
-func (h *Hub) handleGroupJoin(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleGroupJoin(c *ws.Conn, req *pb.GroupJoinRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	groupID := msg.Content
-	if groupID == "" {
-		h.writeFriendError(c, "group_id required")
+	if req.GroupId == "" {
+		h.writeError(c, "group_id required")
 		return
 	}
 
-	if err := h.svc.JoinGroup(groupID, c.QQ); err != nil {
-		h.writeFriendError(c, err.Error())
+	if err := h.svc.JoinGroup(req.GroupId, c.QQ); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	h.JoinGroup(c.QQ, groupID)
-	log.Printf("[group] qq=%d joined group %s", c.QQ, groupID)
-	h.writeFriendResult(c, "joined group "+groupID)
+	h.JoinGroup(c.QQ, req.GroupId)
+	log.Printf("[group] qq=%d joined group %s", c.QQ, req.GroupId)
+	h.writeError(c, "joined group "+req.GroupId)
 }
 
-func (h *Hub) handleGroupLeave(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleGroupLeave(c *ws.Conn, req *pb.GroupLeaveRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	groupID := msg.Content
-	if groupID == "" {
-		h.writeFriendError(c, "group_id required")
+	if req.GroupId == "" {
+		h.writeError(c, "group_id required")
 		return
 	}
 
-	if err := h.svc.LeaveGroup(groupID, c.QQ); err != nil {
-		h.writeFriendError(c, err.Error())
+	if err := h.svc.LeaveGroup(req.GroupId, c.QQ); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	h.LeaveGroup(c.QQ, groupID)
-	log.Printf("[group] qq=%d left group %s", c.QQ, groupID)
-	h.writeFriendResult(c, "left group "+groupID)
+	h.LeaveGroup(c.QQ, req.GroupId)
+	log.Printf("[group] qq=%d left group %s", c.QQ, req.GroupId)
+	h.writeError(c, "left group "+req.GroupId)
 }
 
-func (h *Hub) handleGroupList(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleGroupList(c *ws.Conn) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	groups, err := h.svc.GetGroupList(c.QQ)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
-	resp := model.GroupListResponse{Groups: groups}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeGroupList,
-		Content: string(payload),
-	})
+	pbGroups := make([]*pb.GroupInfo, 0, len(groups))
+	for _, g := range groups {
+		pbGroups = append(pbGroups, &pb.GroupInfo{
+			GroupId: g.GroupID, Name: g.Name, OwnerQq: g.OwnerQQ, MemberCnt: int32(g.MemberCnt),
+		})
+	}
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_GroupListResponse{GroupListResponse: &pb.GroupListResponse{
+		Groups: pbGroups,
+	}}})
 }
 
-func (h *Hub) handleGroupInfo(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleGroupInfo(c *ws.Conn, req *pb.GroupInfoRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	groupID := msg.Content
-	if groupID == "" {
-		h.writeFriendError(c, "group_id required")
+	if req.GroupId == "" {
+		h.writeError(c, "group_id required")
 		return
 	}
 
-	info, err := h.svc.GetGroupInfo(groupID)
+	info, err := h.svc.GetGroupInfo(req.GroupId)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if !h.svc.IsGroupMember(groupID, c.QQ) {
-		h.writeFriendError(c, "not group member")
+	if !h.svc.IsGroupMember(req.GroupId, c.QQ) {
+		h.writeError(c, "not group member")
 		return
 	}
 
-	payload, _ := json.Marshal(info)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeGroupInfo,
-		Content: string(payload),
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_GroupInfoResponse{GroupInfoResponse: &pb.GroupInfoResponse{
+		GroupId: info.GroupID, Name: info.Name, OwnerQq: info.OwnerQQ, MemberCnt: int32(info.MemberCnt),
+	}}})
 }
 
 func (h *Hub) notifyFriendRequest(fromQQ int64, toQQ int64, message string) {
@@ -1114,23 +1052,14 @@ func (h *Hub) notifyFriendRequest(fromQQ int64, toQQ int64, message string) {
 		fromNickname = fromUser.Nickname
 	}
 
-	notify := map[string]interface{}{
-		"type":          "friend_request",
-		"from_qq":       fromQQ,
-		"from_nickname": fromNickname,
-		"message":       message,
-	}
-	payload, _ := json.Marshal(notify)
-
 	h.mu.RLock()
 	conn, ok := h.conns[toUser.QQNumber]
 	h.mu.RUnlock()
 
 	if ok {
-		conn.WriteJSON(&model.Message{
-			MsgType: model.MsgTypeFriendRequest,
-			Content: string(payload),
-		})
+		h.writeWire(conn, &pb.WireMessage{Payload: &pb.WireMessage_FriendRequest{FriendRequest: &pb.FriendRequest{
+			ToQqNumber: fromQQ, Message: fmt.Sprintf(`{"from_qq":%d,"from_nickname":"%s","message":"%s"}`, fromQQ, fromNickname, message),
+		}}})
 	}
 }
 
@@ -1141,42 +1070,17 @@ func (h *Hub) notifyFriendAccepted(accepterQQ int64, requesterQQ int64) {
 	}
 
 	accepter, _ := h.svc.GetUserByQQ(accepterQQ)
-
-	notify := map[string]interface{}{
-		"type":              "friend_accepted",
-		"accepter_qq":       accepterQQ,
-		"accepter_nickname": "",
-	}
-	if accepter != nil {
-		notify["accepter_nickname"] = accepter.Nickname
-	}
-
-	payload, _ := json.Marshal(notify)
+	_ = accepter
 
 	h.mu.RLock()
 	conn, ok := h.conns[requester.QQNumber]
 	h.mu.RUnlock()
 
 	if ok {
-		conn.WriteJSON(&model.Message{
-			MsgType: model.MsgTypeFriendAccept,
-			Content: string(payload),
-		})
+		h.writeWire(conn, &pb.WireMessage{Payload: &pb.WireMessage_FriendAccept{FriendAccept: &pb.FriendAccept{
+			ToQqNumber: accepterQQ,
+		}}})
 	}
-}
-
-func (h *Hub) writeFriendError(c *ws.Conn, errMsg string) {
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeServerAck,
-		Content: errMsg,
-	})
-}
-
-func (h *Hub) writeFriendResult(c *ws.Conn, result string) {
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeServerAck,
-		Content: result,
-	})
 }
 
 func (h *Hub) pushOfflineMessages(qq int64) {
@@ -1201,31 +1105,39 @@ func (h *Hub) pushOfflineMessages(qq int64) {
 			return
 		}
 
-		sendMsg := &model.Message{
-			ID:        msg.ID,
-			MsgType:   msg.MsgType,
-			FromQQ:    msg.FromQQ,
-			ToQQ:      msg.ToQQ,
-			GroupID:   msg.GroupID,
-			Content:   msg.Content,
-			Delivered: msg.Delivered,
-			CreatedAt: msg.CreatedAt,
+		sendWire := &pb.WireMessage{
+			Id:        msg.ID,
+			FromQq:    msg.FromQQ,
+			ToQq:      msg.ToQQ,
+			GroupId:   msg.GroupID,
+			CreatedAt: msg.CreatedAt.Unix(),
 		}
 
-		if err := conn.WriteJSON(sendMsg); err != nil {
+		switch msg.MsgType {
+		case model.MsgTypeText:
+			sendWire.Payload = &pb.WireMessage_TextMessage{TextMessage: &pb.TextMessage{Content: msg.Content}}
+		case model.MsgTypeImage, model.MsgTypeFile:
+			sendWire.Payload = &pb.WireMessage_FileMessage{FileMessage: &pb.FileMessage{
+				Filename: msg.Content, Data: []byte(msg.Content),
+			}}
+		default:
+			sendWire.Payload = &pb.WireMessage_TextMessage{TextMessage: &pb.TextMessage{Content: msg.Content}}
+		}
+
+		if err := conn.WriteProto(sendWire); err != nil {
 			log.Printf("[offline] push to qq=%d error: %v", qq, err)
 			return
 		}
 	}
 }
 
-func (h *Hub) sendToUser(qq int64, msg *model.Message) {
+func (h *Hub) sendToUser(qq int64, msg *pb.WireMessage) {
 	h.mu.RLock()
 	conn, ok := h.conns[qq]
 	h.mu.RUnlock()
 
 	if ok {
-		if err := conn.WriteJSON(msg); err != nil {
+		if err := conn.WriteProto(msg); err != nil {
 			log.Printf("[send] write to qq=%d error: %v", qq, err)
 		}
 		return
@@ -1241,23 +1153,23 @@ func (h *Hub) sendToUser(qq int64, msg *model.Message) {
 	log.Printf("[send] target user qq=%d offline, saved to DB for later delivery", qq)
 }
 
-func (h *Hub) broadcastToGroup(msg *model.Message) {
-	if h.pubsubRouter != nil && msg.GroupID != "" {
-		h.pubsubRouter.PublishToGroup(msg.GroupID, msg)
+func (h *Hub) broadcastToGroup(msg *pb.WireMessage) {
+	if h.pubsubRouter != nil && msg.GroupId != "" {
+		h.pubsubRouter.PublishToGroup(msg.GroupId, msg)
 	}
 
-	members, err := h.svc.GetGroupMembers(msg.GroupID)
+	members, err := h.svc.GetGroupMembers(msg.GroupId)
 	if err != nil {
 		return
 	}
 
 	for _, qq := range members {
-		if qq != msg.FromQQ {
+		if qq != msg.FromQq {
 			h.mu.RLock()
 			conn, ok := h.conns[qq]
 			h.mu.RUnlock()
 			if ok {
-				conn.WriteJSON(msg)
+				conn.WriteProto(msg)
 			}
 		}
 	}
@@ -1337,186 +1249,184 @@ func (h *Hub) Shutdown() {
 	log.Printf("[hub] all connections closed, online was: %d", len(h.conns))
 }
 
-func (h *Hub) handleChangePassword(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleChangePassword(c *ws.Conn, req *pb.ChangePasswordRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
-		return
-	}
-
-	var req model.ChangePasswordRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	if req.OldPassword == "" || req.NewPassword == "" {
-		h.writeFriendError(c, "old_password and new_password required")
+		h.writeError(c, "old_password and new_password required")
 		return
 	}
 
 	accessToken, refreshToken, err := h.svc.ChangePassword(c.QQ, req.OldPassword, req.NewPassword)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
 	log.Printf("[changepw] qq=%d changed password", c.QQ)
-	payload, _ := json.Marshal(&model.ChangePasswordResponse{
-		Code:         0,
-		Message:      "password changed",
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-	})
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeChangePasswordAck,
-		Content: string(payload),
-	})
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_ChangePasswordResponse{ChangePasswordResponse: &pb.ChangePasswordResponse{
+		Code: 0, Message: "password changed", AccessToken: accessToken, RefreshToken: refreshToken,
+	}}})
 }
 
-func (h *Hub) handleBlockUser(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleBlockUser(c *ws.Conn, req *pb.BlockUserRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	qq, err := strconv.ParseInt(msg.Content, 10, 64)
-	if err != nil {
-		h.writeFriendError(c, "invalid QQ number")
+	if err := h.svc.BlockUser(c.QQ, req.Qq); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.BlockUser(c.QQ, qq); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	log.Printf("[block] qq=%d blocked qq=%d", c.QQ, qq)
-	h.writeFriendResult(c, "user blocked")
+	log.Printf("[block] qq=%d blocked qq=%d", c.QQ, req.Qq)
+	h.writeError(c, "user blocked")
 }
 
-func (h *Hub) handleUnblockUser(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleUnblockUser(c *ws.Conn, req *pb.UnblockUserRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	qq, err := strconv.ParseInt(msg.Content, 10, 64)
-	if err != nil {
-		h.writeFriendError(c, "invalid QQ number")
+	if err := h.svc.UnblockUser(c.QQ, req.Qq); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.UnblockUser(c.QQ, qq); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
-
-	log.Printf("[unblock] qq=%d unblocked qq=%d", c.QQ, qq)
-	h.writeFriendResult(c, "user unblocked")
+	log.Printf("[unblock] qq=%d unblocked qq=%d", c.QQ, req.Qq)
+	h.writeError(c, "user unblocked")
 }
 
-func (h *Hub) handleBlacklist(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleBlacklist(c *ws.Conn) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
 	blocked, err := h.svc.GetBlacklist(c.QQ)
 	if err != nil {
-		h.writeFriendError(c, err.Error())
+		h.writeError(c, err.Error())
 		return
 	}
 
-	resp := model.BlacklistResponse{BlockedUsers: blocked}
-	payload, _ := json.Marshal(resp)
-	c.WriteJSON(&model.Message{
-		MsgType: model.MsgTypeBlacklist,
-		Content: string(payload),
-	})
+	pbBlocked := make([]*pb.BlockedUserInfo, 0, len(blocked))
+	for _, b := range blocked {
+		pbBlocked = append(pbBlocked, &pb.BlockedUserInfo{QqNumber: b.QQNumber, Nickname: b.Nickname})
+	}
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_BlacklistResponse{BlacklistResponse: &pb.BlacklistResponse{
+		BlockedUsers: pbBlocked,
+	}}})
 }
 
-func (h *Hub) handleReadReceipt(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleReadReceipt(c *ws.Conn, receipt *pb.ReadReceipt) {
 	if c.QQ == 0 {
 		return
 	}
-
-	var req model.AckRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		return
-	}
-
-	h.svc.MarkRead(req.MessageID)
+	h.svc.MarkRead(receipt.MessageId)
 }
 
-func (h *Hub) handleRecall(c *ws.Conn, msg *model.Message) {
+func (h *Hub) handleRecall(c *ws.Conn, wire *pb.WireMessage, req *pb.RecallRequest) {
 	if c.QQ == 0 {
-		h.writeFriendError(c, "not logged in")
+		h.writeError(c, "not logged in")
 		return
 	}
 
-	var req model.RecallRequest
-	if err := json.Unmarshal([]byte(msg.Content), &req); err != nil {
-		h.writeFriendError(c, "invalid payload")
+	if err := h.svc.RecallMessage(c.QQ, req.MessageId); err != nil {
+		h.writeError(c, err.Error())
 		return
 	}
 
-	if err := h.svc.RecallMessage(c.QQ, req.MessageID); err != nil {
-		h.writeFriendError(c, err.Error())
-		return
-	}
+	log.Printf("[recall] qq=%d recalled message id=%d", c.QQ, req.MessageId)
+	h.writeError(c, "message recalled")
 
-	log.Printf("[recall] qq=%d recalled message id=%d", c.QQ, req.MessageID)
-	h.writeFriendResult(c, "message recalled")
+	notify := &pb.RecallNotify{MessageId: req.MessageId, FromQq: c.QQ, GroupId: wire.GroupId}
 
-	notify := model.RecallNotify{
-		MessageID: req.MessageID,
-		FromQQ:    c.QQ,
-	}
-	notifyData, _ := json.Marshal(notify)
-
-	if msg.GroupID != "" {
-		members, err := h.svc.GetGroupMembers(msg.GroupID)
+	if wire.GroupId != "" {
+		members, err := h.svc.GetGroupMembers(wire.GroupId)
 		if err == nil {
 			for _, qq := range members {
 				if qq != c.QQ {
-					h.sendToUser(qq, &model.Message{
-						MsgType: model.MsgTypeRecallNotify,
-						Content: string(notifyData),
-					})
+					h.sendToUser(qq, &pb.WireMessage{Payload: &pb.WireMessage_RecallNotify{RecallNotify: notify}})
 				}
 			}
 		}
 	}
 }
 
-func (h *Hub) handlePubSubMessage(qq int64, msg *model.Message) {
+func (h *Hub) handleBackup(c *ws.Conn) {
+	if c.QQ == 0 {
+		h.writeError(c, "not logged in")
+		return
+	}
+
+	data, filename, err := h.svc.BackupDB()
+	if err != nil {
+		log.Printf("[backup] failed: %v", err)
+		h.writeError(c, "backup failed: "+err.Error())
+		return
+	}
+
+	log.Printf("[backup] qq=%d exported %s (%d bytes)", c.QQ, filename, len(data))
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_BackupResponse{BackupResponse: &pb.BackupResponse{
+		Code: 0, Message: "ok", Filename: filename, Size: int64(len(data)), Data: data,
+	}}})
+}
+
+func (h *Hub) handleClean(c *ws.Conn, req *pb.CleanRequest) {
+	if c.QQ == 0 {
+		h.writeError(c, "not logged in")
+		return
+	}
+
+	deleted, err := h.svc.CleanMessages(int(req.Days))
+	if err != nil {
+		log.Printf("[clean] failed: %v", err)
+		h.writeError(c, "clean failed: "+err.Error())
+		return
+	}
+
+	log.Printf("[clean] qq=%d deleted %d messages older than %d days", c.QQ, deleted, req.Days)
+
+	h.writeWire(c, &pb.WireMessage{Payload: &pb.WireMessage_CleanResponse{CleanResponse: &pb.CleanResponse{
+		Code: 0, Message: "ok", Deleted: deleted,
+	}}})
+}
+
+func (h *Hub) handlePubSubMessage(qq int64, msg *pb.WireMessage) {
 	if qq != 0 {
 		h.mu.RLock()
 		conn, ok := h.conns[qq]
 		h.mu.RUnlock()
 		if ok {
-			conn.WriteJSON(msg)
+			conn.WriteProto(msg)
 		}
 		return
 	}
-	if msg.GroupID != "" {
-		members, err := h.svc.GetGroupMembers(msg.GroupID)
+	if msg.GroupId != "" {
+		members, err := h.svc.GetGroupMembers(msg.GroupId)
 		if err != nil {
 			return
 		}
 		for _, memberQQ := range members {
-			if memberQQ != msg.FromQQ {
+			if memberQQ != msg.FromQq {
 				h.mu.RLock()
 				conn, ok := h.conns[memberQQ]
 				h.mu.RUnlock()
 				if ok {
-					conn.WriteJSON(msg)
+					conn.WriteProto(msg)
 				}
 			}
 		}
 	}
 }
 
-func (h *Hub) HandlePubSubMessage(qq int64, msg *model.Message) {
+func (h *Hub) HandlePubSubMessage(qq int64, msg *pb.WireMessage) {
 	h.handlePubSubMessage(qq, msg)
 }

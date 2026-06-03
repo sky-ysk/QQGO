@@ -2,6 +2,62 @@
 
 ---
 
+## [v0.11] — 2026-06-03 / branch: `main`
+
+### Added
+- **Protobuf 协议：** 全量替换 JSON 序列化为 Protobuf 二进制传输，45+ 消息类型定义在 `internal/protocol/qqgo.proto`
+- **类型安全 dispatch：** handler 使用 `oneof` 类型匹配替代 `MsgType` 整数分发，编译期检查消息类型
+- **二进制 WebSocket：** `pkg/websocket/conn.go` 改用 `BinaryMessage`，新增 `WriteProto` 方法，maxMessageSize 提升至 10MB
+- **Protobuf PubSub：** `internal/middleware/pubsub.go` 改用 `*pb.WireMessage` + protobuf 序列化
+- **设计文档：** `docs/superpowers/specs/2026-06-03-protobuf-protocol-design.md`
+- **新依赖：** `google.golang.org/protobuf`
+- **新文件：** `internal/protocol/qqgo.proto`, `internal/protocol/qqgo.pb.go`
+
+### Changed
+- **internal/handler/ws.go：** 全部重写，dispatch 改为 protobuf oneof 类型匹配，所有 handler 接收类型化参数
+- **cmd/client/main.go：** 全部重写，所有消息发送/接收改用 protobuf
+- **cmd/client/v06_integration_test.go：** 重写测试客户端使用 protobuf
+- **internal/model/message.go：** 新增 `MsgTypeBackup/Ack(500/501)`, `MsgTypeClean/Ack(502/503)` 及对应 DTO
+- **internal/service/chat.go：** 新增 `BackupDB()`, `CleanMessages()` 方法，`ChatService` 增加 `dbPath` 字段
+- **cmd/server/main.go：** `NewChatService` 传入 `cfg.DBPath`
+
+### Verified
+- 编译通过：`go build ./...`
+- 单元测试：全部通过（service 覆盖率 50.3% → 60.8%）
+- 集成测试：8/8 通过（Token 持久化、消息收发、群聊、会话列表、非好友限制）
+- 本地存储测试：12/12 通过
+
+---
+
+## [v0.10] — 2026-06-03 / branch: `main`
+
+### Batch 1 — 数据库管理接口
+
+#### Added
+- **数据库备份：** `/backup` 命令导出 SQLite 数据库，客户端保存到 `DATA/<qq>/qqgo_backup_<timestamp>.db`
+- **消息清理：** `/clean <days>` 命令清理 N 天前的过期消息，返回删除条数
+- **新消息类型：** `MsgTypeBackup(500)`, `MsgTypeBackupAck(501)`, `MsgTypeClean(502)`, `MsgTypeCleanAck(503)`
+- **新数据模型：** `BackupResponse`, `CleanRequest`, `CleanResponse`
+- **新 Service 方法：** `BackupDB()`, `CleanMessages(days int)`
+
+### Batch 2 — JWT Token 认证升级（✅ 已完成）
+
+#### Added
+- **JWT 双 Token：** Access token (JWT, 15min) + Refresh token (随机串, 7d)
+- **自动刷新：** 客户端 401 时自动 refresh，对用户透明
+- **新消息类型：** `MsgTypeRefreshToken(107)`, `MsgTypeRefreshTokenAck(108)`
+- **新文件：** `internal/service/jwt.go`, `internal/service/jwt_test.go`
+- **新依赖：** `github.com/golang-jwt/jwt/v5`
+
+### 单元测试覆盖提升
+
+#### Added
+- **15 个新测试：** `TestGetGroupInfo`, `TestGetSessions` (3 variants), `TestCleanMessages` (2 variants), `TestSearchMessages` (5 variants), `TestEscapeFTS5Keyword`, `TestParseTimeArg`
+- **覆盖率提升：** `internal/service` 从 50.3% 提升至 60.8%（+10.5%）
+- **新增覆盖：** `GetGroupInfo` (0% → 100%), `GetSessions` (0% → 92.5%), `CleanMessages` (0% → 85.7%), `escapeFTS5Keyword` (0% → 100%), `parseTimeArg` (75% → 100%)
+
+---
+
 ## [v0.9] — 2026-06-01 / branch: `feature/v0.9-history-search`
 
 ### Added

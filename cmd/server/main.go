@@ -56,7 +56,7 @@ func main() {
 		log.Printf("[fts] full-text search initialized")
 	}
 
-	svc := service.NewChatService(db)
+	svc := service.NewChatService(db, cfg.DBPath)
 	rl := middleware.NewRateLimiter(cfg.MsgRateLimit)
 	hub := handler.NewHub(svc, nil, cfg.Server.MaxConnections, rl, onlineTracker, pubsubRouter, instanceID)
 

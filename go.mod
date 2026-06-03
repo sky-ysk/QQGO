@@ -19,4 +19,5 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )

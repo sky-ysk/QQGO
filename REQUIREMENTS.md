@@ -262,7 +262,7 @@
 - **限流中间件：** 连接限流 (MAX_CONNECTIONS) + 消息频率限制 (MSG_RATE_LIMIT)
 - **Docker 验证：** 镜像构建、compose 启动、health 检查、数据持久化、TLS 端到端全部通过
 
-#### Batch 2：JWT Token 认证升级 🚧（设计完成，待实现）
+#### Batch 2：JWT Token 认证升级 ✅
 
 - **设计文档：** `docs/superpowers/specs/2026-05-27-jwt-auth-design.md`
 - **Access token：** JWT 格式，15分钟过期，HS256 签名，claims 包含 qq + exp
@@ -274,11 +274,11 @@
 - **新依赖：** `github.com/golang-jwt/jwt/v5`
 - **涉及文件：** `internal/service/jwt.go`（新增）、`chat.go`、`ws.go`、`message.go`、`user.go`、`config.go`、`cmd/client/`
 
-#### Batch 3：分布式基础设施（依赖 Batch 2 完成）
+#### Batch 3：分布式基础设施（依赖 Batch 2 完成）✅
 
-- **Redis 在线状态：** Redis 缓存在线用户，TTL 心跳续期，掉线自动过期
-- **分布式消息路由：** NATS 或 Redis PubSub 实现跨实例消息转发
-- **数据库管理接口：** `/backup` 导出 SQLite、`/clean` 清理过期消息
+- **Redis 在线状态：** Redis 缓存在线用户，TTL 心跳续期，掉线自动过期 ✅
+- **分布式消息路由：** NATS 或 Redis PubSub 实现跨实例消息转发 ✅
+- **数据库管理接口：** `/backup` 导出 SQLite、`/clean` 清理过期消息 ✅ (v0.10)
 
 ---
 
@@ -287,7 +287,7 @@
 | 需求 | 说明 | 状态 | 完成版本 |
 |------|------|------|----------|
 | **桌面端 GUI** | 引入 Wails（Go + Web 前端）或 Fyne 开发桌面客户端 | 🔲 pending | — |
-| **Protobuf 协议** | 替换 JSON 序列化，降低带宽 | 🔲 pending | — |
+| **Protobuf 协议** | 替换 JSON 序列化，降低带宽 | ✅ done | v0.11 |
 | **分布式扩展** | 接入 NATS/Redis PubSub 实现多网关消息路由 | 🔲 pending | — |
 | **在线状态** | Redis 缓存在线状态，支持状态变更通知 | 🔲 pending | — |
 | **消息已读** | 已读回执、未读计数 | ✅ done | v0.7 |
@@ -299,9 +299,9 @@
 | 需求 | 说明 | 状态 | 完成版本 |
 |------|------|------|----------|
 | **TLS/SSL** | WebSocket 加密传输 | ✅ done | v0.8 |
-| **限流/鉴权** | 接口限流、JWT Token | ✅ done (限流) / 🚧 in progress (JWT 设计完成) | v0.8 (限流) / v0.8 (JWT) |
+| **限流/鉴权** | 接口限流、JWT Token | ✅ done (限流) / ✅ done (JWT 双 token) | v0.8 (限流) / v0.10 (JWT) |
 | **Docker 部署** | Dockerfile + docker-compose 一键启动 | ✅ done | v0.8 |
-| **单元测试** | 核心模块测试覆盖 | 🔲 pending | — |
+| **单元测试** | 核心模块测试覆盖 | ✅ service 60.8% | v0.11 |
 
 ---
 

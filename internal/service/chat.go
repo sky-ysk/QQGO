@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,11 +31,12 @@ var (
 )
 
 type ChatService struct {
-	db *gorm.DB
+	db     *gorm.DB
+	dbPath string
 }
 
-func NewChatService(db *gorm.DB) *ChatService {
-	return &ChatService{db: db}
+func NewChatService(db *gorm.DB, dbPath string) *ChatService {
+	return &ChatService{db: db, dbPath: dbPath}
 }
 
 func (s *ChatService) Register(nickname, password string) (int64, error) {
@@ -1000,5 +1003,58 @@ func (s *ChatService) getContextMessages(messageID int64, msg *model.Message, my
 	}
 
 	return resultBefore, resultAfter
+}
+
+func (s *ChatService) BackupDB() ([]byte, string, error) {
+	backupPath := s.dbPath + ".backup"
+
+	if err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error; err != nil {
+		log.Printf("[backup] wal_checkpoint warning: %v", err)
+	}
+
+	src, err := os.Open(s.dbPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("open db: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(backupPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("create backup: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		os.Remove(backupPath)
+		return nil, "", fmt.Errorf("copy db: %w", err)
+	}
+
+	dst.Close()
+
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		os.Remove(backupPath)
+		return nil, "", fmt.Errorf("read backup: %w", err)
+	}
+
+	os.Remove(backupPath)
+
+	filename := fmt.Sprintf("qqgo_backup_%s.db", time.Now().Format("20060102_150405"))
+	return data, filename, nil
+}
+
+func (s *ChatService) CleanMessages(days int) (int64, error) {
+	if days <= 0 {
+		return 0, errors.New("days must be positive")
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -days)
+
+	result := s.db.Where("created_at < ?", cutoff).Delete(&model.Message{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+
+	return result.RowsAffected, nil
 }
 

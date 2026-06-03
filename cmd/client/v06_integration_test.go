@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -10,7 +9,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/qqgo/server/internal/model"
+	pb "github.com/qqgo/server/internal/protocol"
+	"google.golang.org/protobuf/proto"
 )
 
 type testClient struct {
@@ -33,17 +33,20 @@ func newTestClient(t *testing.T) *testClient {
 	return &testClient{conn: conn}
 }
 
-func (c *testClient) send(msg *model.Message) error {
-	data, _ := json.Marshal(msg)
-	return c.conn.WriteMessage(websocket.TextMessage, data)
+func (c *testClient) send(wire *pb.WireMessage) error {
+	data, err := proto.Marshal(wire)
+	if err != nil {
+		return err
+	}
+	return c.conn.WriteMessage(websocket.BinaryMessage, data)
 }
 
-func (c *testClient) read(timeout time.Duration) (*model.Message, error) {
+func (c *testClient) read(timeout time.Duration) (*pb.WireMessage, error) {
 	if c.conn == nil {
 		return nil, fmt.Errorf("connection closed")
 	}
 	done := make(chan struct{})
-	var msg *model.Message
+	var wire *pb.WireMessage
 	var readErr error
 
 	go func() {
@@ -51,11 +54,11 @@ func (c *testClient) read(timeout time.Duration) (*model.Message, error) {
 		if err != nil {
 			readErr = err
 		} else {
-			var m model.Message
-			if err := json.Unmarshal(data, &m); err != nil {
+			var w pb.WireMessage
+			if err := proto.Unmarshal(data, &w); err != nil {
 				readErr = err
 			} else {
-				msg = &m
+				wire = &w
 			}
 		}
 		close(done)
@@ -63,52 +66,51 @@ func (c *testClient) read(timeout time.Duration) (*model.Message, error) {
 
 	select {
 	case <-done:
-		return msg, readErr
+		return wire, readErr
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("read timeout")
 	}
 }
 
-func (c *testClient) readUntil(t *testing.T, msgType model.MessageType, timeout time.Duration) *model.Message {
+func (c *testClient) readUntilPayload(t *testing.T, match func(*pb.WireMessage) bool, timeout time.Duration) *pb.WireMessage {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		msg, err := c.read(500 * time.Millisecond)
+		wire, err := c.read(500 * time.Millisecond)
 		if err != nil {
 			if strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "close") {
-				t.Fatalf("connection closed while waiting for msgType %d", msgType)
+				t.Fatalf("connection closed while waiting for payload")
 			}
 			continue
 		}
-		if msg.MsgType == msgType {
-			return msg
+		if match(wire) {
+			return wire
 		}
 	}
-	t.Fatalf("timeout waiting for msgType %d", msgType)
+	t.Fatalf("timeout waiting for matching payload")
 	return nil
 }
 
 func (c *testClient) register(t *testing.T, password, nickname string) {
-	payload, _ := json.Marshal(&model.RegisterRequest{
-		Password: password,
-		Nickname: nickname,
-	})
-	c.send(&model.Message{
-		MsgType: model.MsgTypeRegister,
-		Content: string(payload),
-	})
+	c.send(&pb.WireMessage{Payload: &pb.WireMessage_RegisterRequest{RegisterRequest: &pb.RegisterRequest{
+		Password: password, Nickname: nickname,
+	}}})
 
-	regAck := c.readUntil(t, model.MsgTypeRegisterAck, 3*time.Second)
-	var regResp model.RegisterResponse
-	json.Unmarshal([]byte(regAck.Content), &regResp)
+	regWire := c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_RegisterResponse)
+		return ok
+	}, 3*time.Second)
+	regResp := regWire.Payload.(*pb.WireMessage_RegisterResponse).RegisterResponse
 	if regResp.Code != 0 {
 		t.Fatalf("register failed: %s", regResp.Message)
 	}
-	c.qq = regResp.QQNumber
+	c.qq = regResp.QqNumber
 	c.nickname = nickname
 
-	loginAck := c.readUntil(t, model.MsgTypeLoginAck, 3*time.Second)
-	var loginResp model.LoginResponse
-	json.Unmarshal([]byte(loginAck.Content), &loginResp)
+	loginWire := c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_LoginResponse)
+		return ok
+	}, 3*time.Second)
+	loginResp := loginWire.Payload.(*pb.WireMessage_LoginResponse).LoginResponse
 	if loginResp.Code != 0 {
 		t.Fatalf("auto-login after register failed: %s", loginResp.Message)
 	}
@@ -117,94 +119,87 @@ func (c *testClient) register(t *testing.T, password, nickname string) {
 }
 
 func (c *testClient) login(t *testing.T, qq int64, password string) {
-	payload, _ := json.Marshal(&model.LoginRequest{
-		QQ:       qq,
-		Password: password,
-		Platform: "cli",
-	})
-	c.send(&model.Message{
-		MsgType: model.MsgTypeLogin,
-		Content: string(payload),
-	})
+	c.send(&pb.WireMessage{Payload: &pb.WireMessage_LoginRequest{LoginRequest: &pb.LoginRequest{
+		Qq: qq, Password: password, Platform: "cli",
+	}}})
 
-	loginAck := c.readUntil(t, model.MsgTypeLoginAck, 3*time.Second)
-	var loginResp model.LoginResponse
-	json.Unmarshal([]byte(loginAck.Content), &loginResp)
+	loginWire := c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_LoginResponse)
+		return ok
+	}, 3*time.Second)
+	loginResp := loginWire.Payload.(*pb.WireMessage_LoginResponse).LoginResponse
 	if loginResp.Code != 0 {
 		t.Fatalf("login failed: %s", loginResp.Message)
 	}
-	c.qq = loginResp.QQNumber
+	c.qq = loginResp.QqNumber
 	c.nickname = loginResp.Nickname
 	c.token = loginResp.AccessToken
 }
 
 func (c *testClient) loginWithToken(t *testing.T, qq int64, token string) {
-	payload, _ := json.Marshal(&model.LoginRequest{
-		QQ:       qq,
-		Token:    token,
-		Platform: "cli",
-	})
-	c.send(&model.Message{
-		MsgType: model.MsgTypeLogin,
-		Content: string(payload),
-	})
+	c.send(&pb.WireMessage{Payload: &pb.WireMessage_LoginRequest{LoginRequest: &pb.LoginRequest{
+		Qq: qq, Token: token, Platform: "cli",
+	}}})
 
-	loginAck := c.readUntil(t, model.MsgTypeLoginAck, 3*time.Second)
-	var loginResp model.LoginResponse
-	json.Unmarshal([]byte(loginAck.Content), &loginResp)
+	loginWire := c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_LoginResponse)
+		return ok
+	}, 3*time.Second)
+	loginResp := loginWire.Payload.(*pb.WireMessage_LoginResponse).LoginResponse
 	if loginResp.Code != 0 {
 		t.Fatalf("token login failed: %s", loginResp.Message)
 	}
-	c.qq = loginResp.QQNumber
+	c.qq = loginResp.QqNumber
 	c.nickname = loginResp.Nickname
 	c.token = loginResp.AccessToken
 }
 
-func (c *testClient) switchTo(t *testing.T, targetQQ int64) {
-	c.send(&model.Message{
-		MsgType: model.MsgTypeCheckUser,
-		Content: strconv.FormatInt(targetQQ, 10),
-	})
+func (c *testClient) switchTo(t *testing.T, tqq int64) {
+	c.send(&pb.WireMessage{Payload: &pb.WireMessage_CheckUserRequest{CheckUserRequest: &pb.CheckUserRequest{Qq: tqq}}})
 
-	resp := c.readUntil(t, model.MsgTypeCheckUser, 3*time.Second)
-	var checkResp model.CheckUserResponse
-	json.Unmarshal([]byte(resp.Content), &checkResp)
+	checkWire := c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_CheckUserResponse)
+		return ok
+	}, 3*time.Second)
+	checkResp := checkWire.Payload.(*pb.WireMessage_CheckUserResponse).CheckUserResponse
 	if checkResp.Code != 0 {
 		t.Fatalf("check user failed: %s", checkResp.Message)
 	}
-	c.targetQQ = targetQQ
+	c.targetQQ = tqq
 
-	histPayload, _ := json.Marshal(&model.HistoryRequest{
-		TargetQQ: targetQQ,
-		Offset:   0,
-		Limit:    30,
-	})
-	c.send(&model.Message{
-		MsgType: model.MsgTypeHistory,
-		Content: string(histPayload),
-	})
-	c.readUntil(t, model.MsgTypeHistory, 3*time.Second)
+	c.send(&pb.WireMessage{Payload: &pb.WireMessage_HistoryRequest{HistoryRequest: &pb.HistoryRequest{
+		TargetQq: tqq, Offset: 0, Limit: 30,
+	}}})
+	c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_HistoryResponse)
+		return ok
+	}, 3*time.Second)
 }
 
 func (c *testClient) sendText(t *testing.T, content string) string {
 	c.msgCount++
-	msg := &model.Message{
+	c.send(&pb.WireMessage{
 		ClientSeq: int64(c.msgCount),
-		MsgType:   model.MsgTypeText,
-		FromQQ:    c.qq,
-		ToQQ:      c.targetQQ,
-		GroupID:   c.groupID,
-		Content:   content,
-	}
-	c.send(msg)
+		FromQq:    c.qq,
+		ToQq:      c.targetQQ,
+		GroupId:   c.groupID,
+		Payload:   &pb.WireMessage_TextMessage{TextMessage: &pb.TextMessage{Content: content}},
+	})
 
-	ack := c.readUntil(t, model.MsgTypeServerAck, 3*time.Second)
+	ackWire := c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_ServerAck)
+		return ok
+	}, 3*time.Second)
+	ack := ackWire.Payload.(*pb.WireMessage_ServerAck).ServerAck
 	c.lastAck = ack.Content
 	return ack.Content
 }
 
-func (c *testClient) receiveText(t *testing.T, timeout time.Duration) *model.Message {
-	return c.readUntil(t, model.MsgTypeText, timeout)
+func (c *testClient) receiveText(t *testing.T, timeout time.Duration) *pb.WireMessage {
+	return c.readUntilPayload(t, func(w *pb.WireMessage) bool {
+		_, ok := w.Payload.(*pb.WireMessage_TextMessage)
+		return ok
+	}, timeout)
 }
 
 func (c *testClient) close() {
@@ -268,15 +263,16 @@ func TestV06_AllFeatures(t *testing.T) {
 			t.Fatalf("send failed: %s", result)
 		}
 
-		msg := bob.receiveText(t, 3*time.Second)
-		if msg.Content != "hello bob" {
-			t.Fatalf("bob received wrong content: %s", msg.Content)
+		msgWire := bob.receiveText(t, 3*time.Second)
+		text := msgWire.Payload.(*pb.WireMessage_TextMessage).TextMessage
+		if text.Content != "hello bob" {
+			t.Fatalf("bob received wrong content: %s", text.Content)
 		}
-		if msg.FromQQ != alice.qq {
-			t.Fatalf("bob received wrong sender: %d", msg.FromQQ)
+		if msgWire.FromQq != alice.qq {
+			t.Fatalf("bob received wrong sender: %d", msgWire.FromQq)
 		}
 
-		t.Logf("✓ BUG-009: Message received correctly by Bob (QQ:%d -> QQ:%d)", msg.FromQQ, msg.ToQQ)
+		t.Logf("✓ BUG-009: Message received correctly by Bob (QQ:%d -> QQ:%d)", msgWire.FromQq, msgWire.ToQq)
 	})
 
 	t.Run("3_BUG010_LeaveGroupExit", func(t *testing.T) {
@@ -288,45 +284,39 @@ func TestV06_AllFeatures(t *testing.T) {
 		defer bob.close()
 		bob.register(t, "pass456", "Bob010")
 
-		payload, _ := json.Marshal(&model.GroupCreateRequest{Name: "test group 010"})
-		alice.send(&model.Message{
-			MsgType: model.MsgTypeGroupCreate,
-			Content: string(payload),
-		})
-		createResp := alice.readUntil(t, model.MsgTypeGroupCreate, 3*time.Second)
-		var groupResult map[string]interface{}
-		json.Unmarshal([]byte(createResp.Content), &groupResult)
-		groupID := groupResult["group_id"].(string)
+		alice.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupCreateRequest{GroupCreateRequest: &pb.GroupCreateRequest{Name: "test group 010"}}})
+		createWire := alice.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_GroupCreateResponse)
+			return ok
+		}, 3*time.Second)
+		groupID := createWire.Payload.(*pb.WireMessage_GroupCreateResponse).GroupCreateResponse.GroupId
 
-		bob.send(&model.Message{
-			MsgType: model.MsgTypeGroupJoin,
-			Content: groupID,
-		})
-		bob.readUntil(t, model.MsgTypeServerAck, 3*time.Second)
+		bob.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupJoinRequest{GroupJoinRequest: &pb.GroupJoinRequest{GroupId: groupID}}})
+		bob.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_ServerAck)
+			return ok
+		}, 3*time.Second)
 
-		bob.send(&model.Message{
-			MsgType: model.MsgTypeGroupInfo,
-			Content: groupID,
-		})
-		bob.readUntil(t, model.MsgTypeGroupInfo, 3*time.Second)
+		bob.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupInfoRequest{GroupInfoRequest: &pb.GroupInfoRequest{GroupId: groupID}}})
+		bob.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_GroupInfoResponse)
+			return ok
+		}, 3*time.Second)
 		bob.groupID = groupID
 
-		ghPayload, _ := json.Marshal(&model.GroupHistoryRequest{
-			GroupID: groupID,
-			Offset:  0,
-			Limit:   30,
-		})
-		bob.send(&model.Message{
-			MsgType: model.MsgTypeGroupHistory,
-			Content: string(ghPayload),
-		})
-		bob.readUntil(t, model.MsgTypeGroupHistory, 3*time.Second)
+		bob.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupHistoryRequest{GroupHistoryRequest: &pb.GroupHistoryRequest{
+			GroupId: groupID, Offset: 0, Limit: 30,
+		}}})
+		bob.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_GroupHistoryResponse)
+			return ok
+		}, 3*time.Second)
 
-		bob.send(&model.Message{
-			MsgType: model.MsgTypeGroupLeave,
-			Content: groupID,
-		})
-		bob.readUntil(t, model.MsgTypeServerAck, 3*time.Second)
+		bob.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupLeaveRequest{GroupLeaveRequest: &pb.GroupLeaveRequest{GroupId: groupID}}})
+		bob.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_ServerAck)
+			return ok
+		}, 3*time.Second)
 		bob.groupID = ""
 
 		bob.switchTo(t, alice.qq)
@@ -335,9 +325,9 @@ func TestV06_AllFeatures(t *testing.T) {
 			t.Fatalf("send after leavegroup failed: %s", result)
 		}
 
-		msg := alice.receiveText(t, 3*time.Second)
-		if msg.GroupID != "" {
-			t.Fatalf("message should not have group_id after leavegroup, got: %s", msg.GroupID)
+		msgWire := alice.receiveText(t, 3*time.Second)
+		if msgWire.GroupId != "" {
+			t.Fatalf("message should not have group_id after leavegroup, got: %s", msgWire.GroupId)
 		}
 
 		t.Logf("✓ BUG-010: After leavegroup, messages go to private chat correctly")
@@ -352,21 +342,18 @@ func TestV06_AllFeatures(t *testing.T) {
 		defer bob.close()
 		bob.register(t, "pass456", "BobGH")
 
-		payload, _ := json.Marshal(&model.GroupCreateRequest{Name: "history group"})
-		alice.send(&model.Message{
-			MsgType: model.MsgTypeGroupCreate,
-			Content: string(payload),
-		})
-		createResp := alice.readUntil(t, model.MsgTypeGroupCreate, 3*time.Second)
-		var groupResult map[string]interface{}
-		json.Unmarshal([]byte(createResp.Content), &groupResult)
-		groupID := groupResult["group_id"].(string)
+		alice.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupCreateRequest{GroupCreateRequest: &pb.GroupCreateRequest{Name: "history group"}}})
+		createWire := alice.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_GroupCreateResponse)
+			return ok
+		}, 3*time.Second)
+		groupID := createWire.Payload.(*pb.WireMessage_GroupCreateResponse).GroupCreateResponse.GroupId
 
-		bob.send(&model.Message{
-			MsgType: model.MsgTypeGroupJoin,
-			Content: groupID,
-		})
-		bob.readUntil(t, model.MsgTypeServerAck, 3*time.Second)
+		bob.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupJoinRequest{GroupJoinRequest: &pb.GroupJoinRequest{GroupId: groupID}}})
+		bob.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_ServerAck)
+			return ok
+		}, 3*time.Second)
 
 		alice.groupID = groupID
 		for i := 0; i < 5; i++ {
@@ -375,24 +362,20 @@ func TestV06_AllFeatures(t *testing.T) {
 		}
 
 		alice.groupID = ""
-		ghPayload, _ := json.Marshal(&model.GroupHistoryRequest{
-			GroupID: groupID,
-			Offset:  0,
-			Limit:   30,
-		})
-		alice.send(&model.Message{
-			MsgType: model.MsgTypeGroupHistory,
-			Content: string(ghPayload),
-		})
-		histResp := alice.readUntil(t, model.MsgTypeGroupHistory, 3*time.Second)
-		var histResult model.GroupHistoryResponse
-		json.Unmarshal([]byte(histResp.Content), &histResult)
+		alice.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupHistoryRequest{GroupHistoryRequest: &pb.GroupHistoryRequest{
+			GroupId: groupID, Offset: 0, Limit: 30,
+		}}})
+		histWire := alice.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_GroupHistoryResponse)
+			return ok
+		}, 3*time.Second)
+		histResp := histWire.Payload.(*pb.WireMessage_GroupHistoryResponse).GroupHistoryResponse
 
-		if len(histResult.Messages) != 5 {
-			t.Fatalf("expected 5 group history messages, got %d", len(histResult.Messages))
+		if len(histResp.Messages) != 5 {
+			t.Fatalf("expected 5 group history messages, got %d", len(histResp.Messages))
 		}
 
-		t.Logf("✓ Group history: %d messages retrieved", len(histResult.Messages))
+		t.Logf("✓ Group history: %d messages retrieved", len(histResp.Messages))
 	})
 
 	t.Run("5_LocalChatLog", func(t *testing.T) {
@@ -408,15 +391,12 @@ func TestV06_AllFeatures(t *testing.T) {
 		defer charlie.close()
 		charlie.register(t, "pass789", "CharlieGM")
 
-		payload, _ := json.Marshal(&model.GroupCreateRequest{Name: "member test"})
-		alice.send(&model.Message{
-			MsgType: model.MsgTypeGroupCreate,
-			Content: string(payload),
-		})
-		createResp := alice.readUntil(t, model.MsgTypeGroupCreate, 3*time.Second)
-		var groupResult map[string]interface{}
-		json.Unmarshal([]byte(createResp.Content), &groupResult)
-		groupID := groupResult["group_id"].(string)
+		alice.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupCreateRequest{GroupCreateRequest: &pb.GroupCreateRequest{Name: "member test"}}})
+		createWire := alice.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_GroupCreateResponse)
+			return ok
+		}, 3*time.Second)
+		groupID := createWire.Payload.(*pb.WireMessage_GroupCreateResponse).GroupCreateResponse.GroupId
 
 		charlie.groupID = groupID
 		result := charlie.sendText(t, "non member msg")
@@ -424,11 +404,11 @@ func TestV06_AllFeatures(t *testing.T) {
 			t.Fatalf("expected 'not group member', got: %s", result)
 		}
 
-		charlie.send(&model.Message{
-			MsgType: model.MsgTypeGroupJoin,
-			Content: groupID,
-		})
-		charlie.readUntil(t, model.MsgTypeServerAck, 3*time.Second)
+		charlie.send(&pb.WireMessage{Payload: &pb.WireMessage_GroupJoinRequest{GroupJoinRequest: &pb.GroupJoinRequest{GroupId: groupID}}})
+		charlie.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_ServerAck)
+			return ok
+		}, 3*time.Second)
 
 		result = charlie.sendText(t, "member msg")
 		if result != "ok" {
@@ -451,20 +431,20 @@ func TestV06_AllFeatures(t *testing.T) {
 		alice.sendText(t, "session test")
 		time.Sleep(500 * time.Millisecond)
 
-		alice.send(&model.Message{
-			MsgType: model.MsgTypeSessionList,
-		})
-		sessResp := alice.readUntil(t, model.MsgTypeSessionList, 3*time.Second)
-		var sessResult model.SessionListResponse
-		json.Unmarshal([]byte(sessResp.Content), &sessResult)
+		alice.send(&pb.WireMessage{Payload: &pb.WireMessage_SessionListRequest{SessionListRequest: &pb.SessionListRequest{}}})
+		sessWire := alice.readUntilPayload(t, func(w *pb.WireMessage) bool {
+			_, ok := w.Payload.(*pb.WireMessage_SessionListResponse)
+			return ok
+		}, 3*time.Second)
+		sessResp := sessWire.Payload.(*pb.WireMessage_SessionListResponse).SessionListResponse
 
-		if len(sessResult.Sessions) == 0 {
+		if len(sessResp.Sessions) == 0 {
 			t.Fatal("session list should not be empty after sending messages")
 		}
 
 		foundBob := false
-		for _, s := range sessResult.Sessions {
-			if s.TargetQQ == bob.qq {
+		for _, s := range sessResp.Sessions {
+			if s.TargetQq == bob.qq {
 				foundBob = true
 				if s.LastMessage != "session test" {
 					t.Fatalf("last message mismatch: expected 'session test', got '%s'", s.LastMessage)
@@ -475,7 +455,7 @@ func TestV06_AllFeatures(t *testing.T) {
 			t.Fatal("session list should contain Bob's session")
 		}
 
-		t.Logf("✓ Session list: %d sessions, Bob's session found", len(sessResult.Sessions))
+		t.Logf("✓ Session list: %d sessions, Bob's session found", len(sessResp.Sessions))
 	})
 
 	t.Run("8_NonFriendLimit", func(t *testing.T) {

@@ -6,15 +6,16 @@ import (
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/qqgo/server/internal/model"
+	pb "github.com/qqgo/server/internal/protocol"
+	"google.golang.org/protobuf/proto"
 )
 
 type PubSubMessage struct {
-	Source  string          `json:"source"`
-	Message json.RawMessage `json:"msg"`
+	Source  string `json:"source"`
+	Message []byte `json:"msg"`
 }
 
-type MessageHandler func(qq int64, msg *model.Message)
+type MessageHandler func(qq int64, msg *pb.WireMessage)
 
 type PubSubRouter struct {
 	rdb        *redis.Client
@@ -68,22 +69,22 @@ func (p *PubSubRouter) Unsubscribe(channels ...string) {
 	p.pubsub.Unsubscribe(p.ctx, channels...)
 }
 
-func (p *PubSubRouter) PublishToUser(qq int64, msg *model.Message) {
+func (p *PubSubRouter) PublishToUser(qq int64, msg *pb.WireMessage) {
 	if p == nil || p.rdb == nil {
 		return
 	}
-	data, _ := json.Marshal(msg)
+	data, _ := proto.Marshal(msg)
 	payload := PubSubMessage{Source: p.instanceID, Message: data}
 	payloadBytes, _ := json.Marshal(payload)
 	channel := fmt.Sprintf("ch:qq:%d", qq)
 	p.rdb.Publish(p.ctx, channel, payloadBytes)
 }
 
-func (p *PubSubRouter) PublishToGroup(groupID string, msg *model.Message) {
+func (p *PubSubRouter) PublishToGroup(groupID string, msg *pb.WireMessage) {
 	if p == nil || p.rdb == nil {
 		return
 	}
-	data, _ := json.Marshal(msg)
+	data, _ := proto.Marshal(msg)
 	payload := PubSubMessage{Source: p.instanceID, Message: data}
 	payloadBytes, _ := json.Marshal(payload)
 	channel := fmt.Sprintf("ch:group:%s", groupID)
@@ -113,14 +114,14 @@ func (p *PubSubRouter) handleMessage(redisMsg *redis.Message) {
 	if pubsubMsg.Source == p.instanceID {
 		return
 	}
-	var msg model.Message
-	if err := json.Unmarshal(pubsubMsg.Message, &msg); err != nil {
+	var msg pb.WireMessage
+	if err := proto.Unmarshal(pubsubMsg.Message, &msg); err != nil {
 		return
 	}
-	if msg.ToQQ != 0 && p.handler != nil {
-		p.handler(msg.ToQQ, &msg)
+	if msg.ToQq != 0 && p.handler != nil {
+		p.handler(msg.ToQq, &msg)
 	}
-	if msg.GroupID != "" && msg.ToQQ == 0 && p.handler != nil {
+	if msg.GroupId != "" && msg.ToQq == 0 && p.handler != nil {
 		p.handler(0, &msg)
 	}
 }

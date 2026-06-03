@@ -56,6 +56,11 @@ const (
 
 	MsgTypeRecall       MessageType = 430
 	MsgTypeRecallNotify MessageType = 431
+
+	MsgTypeBackup    MessageType = 500
+	MsgTypeBackupAck MessageType = 501
+	MsgTypeClean     MessageType = 502
+	MsgTypeCleanAck  MessageType = 503
 )
 
 const MaxFriends = 500
@@ -294,4 +299,22 @@ type SearchResponse struct {
 	Keyword string             `json:"keyword"`
 	Total   int                `json:"total"`
 	Results []SearchResultItem `json:"results"`
+}
+
+type BackupResponse struct {
+	Code     int    `json:"code"`
+	Message  string `json:"message"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	Data     string `json:"data"`
+}
+
+type CleanRequest struct {
+	Days int `json:"days"`
+}
+
+type CleanResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Deleted int64  `json:"deleted"`
 }

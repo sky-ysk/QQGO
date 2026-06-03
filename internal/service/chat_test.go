@@ -45,7 +45,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 func TestNonFriendMessageLimit(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, err := svc.Register("alice", "password123")
 	if err != nil {
@@ -105,7 +105,7 @@ func TestNonFriendMessageLimit(t *testing.T) {
 
 func TestClearMessageCountsOnAcceptFriend(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("charlie", "password123")
 	qq2, _ := svc.Register("dave", "password456")
@@ -130,7 +130,7 @@ func TestClearMessageCountsOnAcceptFriend(t *testing.T) {
 
 func TestDeleteFriendThenMessageLimit(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("eve", "password123")
 	qq2, _ := svc.Register("frank", "password456")
@@ -164,7 +164,7 @@ func TestDeleteFriendThenMessageLimit(t *testing.T) {
 
 func TestGetHistoryWithTarget(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -228,7 +228,7 @@ func TestGetHistoryWithTarget(t *testing.T) {
 
 func TestGroupChat(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -300,7 +300,7 @@ func TestGroupChat(t *testing.T) {
 
 func TestGetGroupHistory(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -377,7 +377,7 @@ func TestGetGroupHistory(t *testing.T) {
 
 func TestGroupHistoryOnlyReturnsChatMessages(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 
@@ -426,7 +426,7 @@ func createTestUser(db *gorm.DB, nickname string, hash string) int64 {
 
 func TestFriendLimit500(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	hash := "$2a$04$xxxxxxxxxxxxxxxxxxxxxO"
 
@@ -485,7 +485,7 @@ func TestFriendLimit500(t *testing.T) {
 
 func TestOfflineFriendRequest(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qqA, err := svc.Register("alice", "password123")
 	if err != nil {
@@ -557,7 +557,7 @@ func TestOfflineFriendRequest(t *testing.T) {
 
 func TestChangePassword(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, err := svc.Register("alice", "oldpassword")
 	if err != nil {
@@ -588,7 +588,7 @@ func TestChangePassword(t *testing.T) {
 
 func TestChangePasswordWrongOld(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("bob", "correctpassword")
 
@@ -600,7 +600,7 @@ func TestChangePasswordWrongOld(t *testing.T) {
 
 func TestBlockUser(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qqA, _ := svc.Register("alice", "password123")
 	qqB, _ := svc.Register("bob", "password456")
@@ -626,7 +626,7 @@ func TestBlockUser(t *testing.T) {
 
 func TestBlockSelf(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("selfblock", "password123")
 
@@ -638,7 +638,7 @@ func TestBlockSelf(t *testing.T) {
 
 func TestUnblockUser(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qqA, _ := svc.Register("alice", "password123")
 	qqB, _ := svc.Register("bob", "password456")
@@ -666,7 +666,7 @@ func TestUnblockUser(t *testing.T) {
 
 func TestGetBlacklist(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qqA, _ := svc.Register("alice", "password123")
 	qqB, _ := svc.Register("bob", "password456")
@@ -705,7 +705,7 @@ func TestGetBlacklist(t *testing.T) {
 
 func TestMarkRead(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -736,7 +736,7 @@ func TestMarkRead(t *testing.T) {
 
 func TestRecallMessage(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -764,7 +764,7 @@ func TestRecallMessage(t *testing.T) {
 
 func TestRecallMessageNotSender(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -787,7 +787,7 @@ func TestRecallMessageNotSender(t *testing.T) {
 
 func TestRecalledMessageNotInHistory(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -824,7 +824,7 @@ func TestRecalledMessageNotInHistory(t *testing.T) {
 
 func TestLoginReturnsDualToken(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("alice", "password123")
 
@@ -850,7 +850,7 @@ func TestLoginReturnsDualToken(t *testing.T) {
 
 func TestLoginWithTokenJWT(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("alice", "password123")
 	accessTok, _, _ := svc.Login(qq, "password123")
@@ -876,7 +876,7 @@ func TestLoginWithTokenJWT(t *testing.T) {
 
 func TestRefreshToken(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("alice", "password123")
 	_, refreshTok, _ := svc.Login(qq, "password123")
@@ -900,7 +900,7 @@ func TestRefreshToken(t *testing.T) {
 
 func TestRefreshTokenInvalid(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("alice", "password123")
 
@@ -912,7 +912,7 @@ func TestRefreshTokenInvalid(t *testing.T) {
 
 func TestRefreshTokenExpired(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("alice", "password123")
 	_, refreshTok, _ := svc.Login(qq, "password123")
@@ -929,7 +929,7 @@ func TestRefreshTokenExpired(t *testing.T) {
 
 func TestClearRefreshToken(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq, _ := svc.Register("alice", "password123")
 	_, refreshTok, _ := svc.Login(qq, "password123")
@@ -949,7 +949,7 @@ func TestClearRefreshToken(t *testing.T) {
 
 func TestHistoryTimeRange(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -1029,7 +1029,7 @@ func TestSearchMessages(t *testing.T) {
 	if !ftsAvailable(db) {
 		t.Skip("FTS5 not available in test environment")
 	}
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -1104,7 +1104,7 @@ func TestSearchRecalledMessages(t *testing.T) {
 	if !ftsAvailable(db) {
 		t.Skip("FTS5 not available in test environment")
 	}
-	svc := NewChatService(db)
+	svc := NewChatService(db, "")
 
 	qq1, _ := svc.Register("alice", "password123")
 	qq2, _ := svc.Register("bob", "password456")
@@ -1128,5 +1128,323 @@ func TestSearchRecalledMessages(t *testing.T) {
 	}
 	if resp.Total != 0 {
 		t.Fatalf("recalled messages should not appear in search, got %d results", resp.Total)
+	}
+}
+
+func TestGetGroupInfo(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+
+	groupID, err := svc.CreateGroup("test group", qq1)
+	if err != nil {
+		t.Fatalf("create group failed: %v", err)
+	}
+
+	info, err := svc.GetGroupInfo(groupID)
+	if err != nil {
+		t.Fatalf("get group info failed: %v", err)
+	}
+	if info.Name != "test group" {
+		t.Fatalf("expected name 'test group', got '%s'", info.Name)
+	}
+	if info.OwnerQQ != qq1 {
+		t.Fatalf("expected owner %d, got %d", qq1, info.OwnerQQ)
+	}
+	if info.MemberCnt != 1 {
+		t.Fatalf("expected 1 member, got %d", info.MemberCnt)
+	}
+
+	_, err = svc.GetGroupInfo("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent group")
+	}
+}
+
+func TestGetSessions(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+	qq3, _ := svc.Register("charlie", "pass789")
+
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq2, Content: "hello bob", MsgType: model.MsgTypeText})
+	time.Sleep(10 * time.Millisecond)
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq3, Content: "hello charlie", MsgType: model.MsgTypeText})
+
+	online := func(qq int64) bool { return false }
+	sessions, err := svc.GetSessions(qq1, online)
+	if err != nil {
+		t.Fatalf("get sessions failed: %v", err)
+	}
+	if len(sessions) < 2 {
+		t.Fatalf("expected at least 2 sessions, got %d", len(sessions))
+	}
+
+	sessions2, err := svc.GetSessions(qq2, online)
+	if err != nil {
+		t.Fatalf("get sessions for bob failed: %v", err)
+	}
+	if len(sessions2) < 1 {
+		t.Fatalf("bob should have at least 1 session, got %d", len(sessions2))
+	}
+}
+
+func TestCleanMessages(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+
+	oldTime := time.Now().AddDate(0, 0, -10)
+	svc.db.Create(&model.Message{FromQQ: qq1, ToQQ: qq2, Content: "old msg", MsgType: model.MsgTypeText, CreatedAt: oldTime})
+	svc.db.Create(&model.Message{FromQQ: qq1, ToQQ: qq2, Content: "new msg", MsgType: model.MsgTypeText})
+
+	deleted, err := svc.CleanMessages(5)
+	if err != nil {
+		t.Fatalf("clean failed: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted, got %d", deleted)
+	}
+
+	var remaining int64
+	svc.db.Model(&model.Message{}).Where("content IN ?", []string{"old msg", "new msg"}).Count(&remaining)
+	if remaining != 1 {
+		t.Fatalf("expected 1 remaining test message, got %d", remaining)
+	}
+
+	_, err = svc.CleanMessages(0)
+	if err == nil {
+		t.Fatal("expected error for days=0")
+	}
+
+	_, err = svc.CleanMessages(-1)
+	if err == nil {
+		t.Fatal("expected error for negative days")
+	}
+}
+
+func TestCleanMessagesNoMatch(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+
+	svc.db.Create(&model.Message{FromQQ: qq1, ToQQ: qq2, Content: "recent msg", MsgType: model.MsgTypeText})
+
+	deleted, err := svc.CleanMessages(30)
+	if err != nil {
+		t.Fatalf("clean failed: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("expected 0 deleted, got %d", deleted)
+	}
+}
+
+func TestSearchMessagesBasic(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq2, Content: "hello world", MsgType: model.MsgTypeText})
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq2, ToQQ: qq1, Content: "hi there", MsgType: model.MsgTypeText})
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq2, Content: "hello again", MsgType: model.MsgTypeText})
+
+	resp, err := svc.SearchMessages(qq1, "hello", 0, "", 50)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Keyword != "hello" {
+		t.Fatalf("expected keyword 'hello', got '%s'", resp.Keyword)
+	}
+	if resp.Total < 2 {
+		t.Fatalf("expected at least 2 results for 'hello', got %d", resp.Total)
+	}
+}
+
+func TestSearchMessagesWithTarget(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+	qq3, _ := svc.Register("charlie", "pass789")
+
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq2, Content: "hello bob", MsgType: model.MsgTypeText})
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq3, Content: "hello charlie", MsgType: model.MsgTypeText})
+
+	resp, err := svc.SearchMessages(qq1, "hello", qq2, "", 50)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total < 1 {
+		t.Fatalf("expected at least 1 result, got %d", resp.Total)
+	}
+	for _, r := range resp.Results {
+		if r.ToQQ != qq2 && r.FromQQ != qq2 {
+			t.Fatalf("result should involve qq2=%d, got from=%d to=%d", qq2, r.FromQQ, r.ToQQ)
+		}
+	}
+}
+
+func TestSearchMessagesInGroup(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	groupID, _ := svc.CreateGroup("search group", qq1)
+
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, GroupID: groupID, Content: "group hello", MsgType: model.MsgTypeText})
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, GroupID: groupID, Content: "group world", MsgType: model.MsgTypeText})
+
+	resp, err := svc.SearchMessages(qq1, "group", 0, groupID, 50)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total < 1 {
+		t.Fatalf("expected at least 1 result, got %d", resp.Total)
+	}
+}
+
+func TestSearchMessagesLimit(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+
+	for i := 0; i < 10; i++ {
+		svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq2, Content: fmt.Sprintf("test message %d", i), MsgType: model.MsgTypeText})
+	}
+
+	resp, err := svc.SearchMessages(qq1, "test", 0, "", 3)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total > 3 {
+		t.Fatalf("expected at most 3 results, got %d", resp.Total)
+	}
+}
+
+func TestSearchMessagesEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+
+	resp, err := svc.SearchMessages(qq1, "nonexistent", 0, "", 50)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total != 0 {
+		t.Fatalf("expected 0 results, got %d", resp.Total)
+	}
+}
+
+func TestEscapeFTS5Keyword(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"hello", `"hello"*`},
+		{`say "hi"`, `"say ""hi"""*`},
+		{"", `""*`},
+	}
+
+	for _, tt := range tests {
+		result := escapeFTS5Keyword(tt.input)
+		if result != tt.expected {
+			t.Fatalf("escapeFTS5Keyword(%q) = %q, expected %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestParseTimeArg(t *testing.T) {
+	tests := []struct {
+		input string
+		valid bool
+	}{
+		{"2026-01-15T10:30:00", true},
+		{"2026-01-15 10:30:00", true},
+		{"2026-01-15", true},
+		{"invalid", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		_, err := parseTimeArg(tt.input)
+		if tt.valid && err != nil {
+			t.Fatalf("parseTimeArg(%q) should succeed, got: %v", tt.input, err)
+		}
+		if !tt.valid && err == nil {
+			t.Fatalf("parseTimeArg(%q) should fail", tt.input)
+		}
+	}
+}
+
+func TestGetSessionsWithGroup(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+
+	groupID, _ := svc.CreateGroup("session group", qq1)
+	svc.JoinGroup(groupID, qq2)
+
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, GroupID: groupID, Content: "group msg", MsgType: model.MsgTypeText})
+
+	online := func(qq int64) bool { return false }
+	sessions, err := svc.GetSessions(qq1, online)
+	if err != nil {
+		t.Fatalf("get sessions failed: %v", err)
+	}
+
+	foundGroup := false
+	for _, s := range sessions {
+		if s.Type == "group" && s.GroupID == groupID {
+			foundGroup = true
+		}
+	}
+	if !foundGroup {
+		t.Fatal("expected group session in session list")
+	}
+}
+
+func TestGetSessionsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+
+	online := func(qq int64) bool { return false }
+	sessions, err := svc.GetSessions(qq1, online)
+	if err != nil {
+		t.Fatalf("get sessions failed: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected 0 sessions, got %d", len(sessions))
 	}
 }

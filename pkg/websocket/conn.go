@@ -1,18 +1,18 @@
 package websocket
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = 30 * time.Second
-	maxMessageSize = 4096
+	maxMessageSize = 10 * 1024 * 1024
 )
 
 type Conn struct {
@@ -66,7 +66,7 @@ func (c *Conn) WriteLoop() {
 				c.WS.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.WS.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if err := c.WS.WriteMessage(websocket.BinaryMessage, msg); err != nil {
 				return
 			}
 		case <-ticker.C:
@@ -85,11 +85,8 @@ func (c *Conn) WriteLoop() {
 	}
 }
 
-func (c *Conn) WriteJSON(v interface{}) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	data, err := json.Marshal(v)
+func (c *Conn) WriteProto(msg proto.Message) error {
+	data, err := proto.Marshal(msg)
 	if err != nil {
 		return err
 	}

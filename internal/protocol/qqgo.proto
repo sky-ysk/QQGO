@@ -1,0 +1,403 @@
+syntax = "proto3";
+
+package protocol;
+
+option go_package = "github.com/qqgo/server/internal/protocol";
+
+message WireMessage {
+  int64 id = 1;
+  int64 client_seq = 2;
+  int64 from_qq = 3;
+  int64 to_qq = 4;
+  string group_id = 5;
+  int64 created_at = 6;
+
+  oneof payload {
+    Heartbeat heartbeat = 10;
+    LoginRequest login_request = 11;
+    LoginResponse login_response = 12;
+    RegisterRequest register_request = 13;
+    RegisterResponse register_response = 14;
+    RefreshTokenRequest refresh_token_request = 15;
+    RefreshTokenResponse refresh_token_response = 16;
+    ServerAck server_ack = 17;
+    DeliveredAck delivered_ack = 18;
+    ReadReceipt read_receipt = 19;
+    TextMessage text_message = 20;
+    FriendRequest friend_request = 21;
+    FriendAccept friend_accept = 22;
+    FriendReject friend_reject = 23;
+    FriendDelete friend_delete = 24;
+    FriendListRequest friend_list_request = 25;
+    FriendListResponse friend_list_response = 26;
+    FriendSearchRequest friend_search_request = 27;
+    FriendSearchResponse friend_search_response = 28;
+    FriendMoveGroup friend_move_group = 29;
+    FriendRemark friend_remark = 30;
+    FriendGroupsRequest friend_groups_request = 31;
+    FriendGroupsResponse friend_groups_response = 32;
+    FriendCreateGroup friend_create_group = 33;
+    FriendDeleteGroup friend_delete_group = 34;
+    CheckUserRequest check_user_request = 35;
+    CheckUserResponse check_user_response = 36;
+    HistoryRequest history_request = 37;
+    HistoryResponse history_response = 38;
+    GroupHistoryRequest group_history_request = 39;
+    GroupHistoryResponse group_history_response = 40;
+    SearchMessagesRequest search_messages_request = 41;
+    SearchMessagesResponse search_messages_response = 42;
+    SessionListRequest session_list_request = 43;
+    SessionListResponse session_list_response = 44;
+    GroupCreateRequest group_create_request = 45;
+    GroupCreateResponse group_create_response = 46;
+    GroupJoinRequest group_join_request = 47;
+    GroupLeaveRequest group_leave_request = 48;
+    GroupListRequest group_list_request = 49;
+    GroupListResponse group_list_response = 50;
+    GroupInfoRequest group_info_request = 51;
+    GroupInfoResponse group_info_response = 52;
+    ChangePasswordRequest change_password_request = 53;
+    ChangePasswordResponse change_password_response = 54;
+    BlockUserRequest block_user_request = 55;
+    UnblockUserRequest unblock_user_request = 56;
+    BlacklistRequest blacklist_request = 57;
+    BlacklistResponse blacklist_response = 58;
+    RecallRequest recall_request = 59;
+    RecallNotify recall_notify = 60;
+    BackupRequest backup_request = 61;
+    BackupResponse backup_response = 62;
+    CleanRequest clean_request = 63;
+    CleanResponse clean_response = 64;
+    FileMessage file_message = 65;
+  }
+}
+
+message Heartbeat {
+  string content = 1;
+}
+
+message LoginRequest {
+  int64 qq = 1;
+  string password = 2;
+  string token = 3;
+  string platform = 4;
+}
+
+message LoginResponse {
+  int32 code = 1;
+  string message = 2;
+  string access_token = 3;
+  string refresh_token = 4;
+  int32 online = 5;
+  int64 qq_number = 6;
+  string nickname = 7;
+}
+
+message RegisterRequest {
+  string password = 1;
+  string nickname = 2;
+}
+
+message RegisterResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 qq_number = 3;
+}
+
+message RefreshTokenRequest {
+  int64 qq = 1;
+  string refresh_token = 2;
+}
+
+message RefreshTokenResponse {
+  int32 code = 1;
+  string message = 2;
+  string access_token = 3;
+}
+
+message ServerAck {
+  string content = 1;
+}
+
+message DeliveredAck {
+  int64 message_id = 1;
+}
+
+message ReadReceipt {
+  int64 message_id = 1;
+}
+
+message TextMessage {
+  string content = 1;
+}
+
+message FileMessage {
+  string filename = 1;
+  int64 size = 2;
+  bytes data = 3;
+}
+
+message FriendRequest {
+  int64 to_qq_number = 1;
+  string message = 2;
+}
+
+message FriendAccept {
+  int64 to_qq_number = 1;
+}
+
+message FriendReject {
+  int64 to_qq_number = 1;
+}
+
+message FriendDelete {
+  int64 to_qq_number = 1;
+}
+
+message FriendListRequest {}
+
+message FriendInfo {
+  int64 qq_number = 1;
+  string nickname = 2;
+  string remark = 3;
+  string group_name = 4;
+  int32 status = 5;
+  bool online = 6;
+}
+
+message FriendListResponse {
+  repeated FriendInfo friends = 1;
+  repeated string all_groups = 2;
+}
+
+message FriendSearchRequest {
+  string keyword = 1;
+}
+
+message UserSearchResult {
+  int64 qq_number = 1;
+  string nickname = 2;
+  bool online = 3;
+}
+
+message FriendSearchResponse {
+  repeated UserSearchResult results = 1;
+}
+
+message FriendMoveGroup {
+  int64 qq_number = 1;
+  string group_name = 2;
+}
+
+message FriendRemark {
+  int64 qq_number = 1;
+  string remark = 2;
+}
+
+message FriendGroupsRequest {}
+
+message FriendGroupsResponse {
+  repeated string groups = 1;
+}
+
+message FriendCreateGroup {
+  string name = 1;
+}
+
+message FriendDeleteGroup {
+  string name = 1;
+}
+
+message CheckUserRequest {
+  int64 qq = 1;
+}
+
+message CheckUserResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 qq_number = 3;
+  string nickname = 4;
+  bool online = 5;
+}
+
+message HistoryRequest {
+  int64 target_qq = 1;
+  int32 offset = 2;
+  int32 limit = 3;
+  string from_time = 4;
+  string to_time = 5;
+}
+
+message HistoryMessage {
+  int64 id = 1;
+  int64 from_qq = 2;
+  int64 to_qq = 3;
+  string content = 4;
+  int64 created_at = 5;
+}
+
+message HistoryResponse {
+  int64 target_qq = 1;
+  string nickname = 2;
+  repeated HistoryMessage messages = 3;
+  int32 offset = 4;
+  bool has_more = 5;
+}
+
+message GroupHistoryRequest {
+  string group_id = 1;
+  int32 offset = 2;
+  int32 limit = 3;
+}
+
+message GroupHistoryResponse {
+  string group_id = 1;
+  string group_name = 2;
+  repeated HistoryMessage messages = 3;
+  int32 offset = 4;
+  bool has_more = 5;
+}
+
+message SearchMessagesRequest {
+  string keyword = 1;
+  int64 target_qq = 2;
+  string group_id = 3;
+  int32 limit = 4;
+}
+
+message SearchResultItem {
+  int64 message_id = 1;
+  int64 from_qq = 2;
+  int64 to_qq = 3;
+  string group_id = 4;
+  string content = 5;
+  int64 created_at = 6;
+  HistoryMessage context_before = 7;
+  HistoryMessage context_after = 8;
+}
+
+message SearchMessagesResponse {
+  string keyword = 1;
+  int32 total = 2;
+  repeated SearchResultItem results = 3;
+}
+
+message SessionListRequest {}
+
+message SessionInfo {
+  string type = 1;
+  int64 target_qq = 2;
+  string group_id = 3;
+  string nickname = 4;
+  string last_message = 5;
+  int64 last_time = 6;
+  bool online = 7;
+  int32 unread_count = 8;
+}
+
+message SessionListResponse {
+  repeated SessionInfo sessions = 1;
+}
+
+message GroupCreateRequest {
+  string name = 1;
+}
+
+message GroupCreateResponse {
+  string group_id = 1;
+  string name = 2;
+  string message = 3;
+}
+
+message GroupJoinRequest {
+  string group_id = 1;
+}
+
+message GroupLeaveRequest {
+  string group_id = 1;
+}
+
+message GroupListRequest {}
+
+message GroupInfo {
+  string group_id = 1;
+  string name = 2;
+  int64 owner_qq = 3;
+  int32 member_cnt = 4;
+}
+
+message GroupListResponse {
+  repeated GroupInfo groups = 1;
+}
+
+message GroupInfoRequest {
+  string group_id = 1;
+}
+
+message GroupInfoResponse {
+  string group_id = 1;
+  string name = 2;
+  int64 owner_qq = 3;
+  int32 member_cnt = 4;
+}
+
+message ChangePasswordRequest {
+  string old_password = 1;
+  string new_password = 2;
+}
+
+message ChangePasswordResponse {
+  int32 code = 1;
+  string message = 2;
+  string access_token = 3;
+  string refresh_token = 4;
+}
+
+message BlockUserRequest {
+  int64 qq = 1;
+}
+
+message UnblockUserRequest {
+  int64 qq = 1;
+}
+
+message BlacklistRequest {}
+
+message BlockedUserInfo {
+  int64 qq_number = 1;
+  string nickname = 2;
+}
+
+message BlacklistResponse {
+  repeated BlockedUserInfo blocked_users = 1;
+}
+
+message RecallRequest {
+  int64 message_id = 1;
+}
+
+message RecallNotify {
+  int64 message_id = 1;
+  int64 from_qq = 2;
+  string group_id = 3;
+}
+
+message BackupRequest {}
+
+message BackupResponse {
+  int32 code = 1;
+  string message = 2;
+  string filename = 3;
+  int64 size = 4;
+  bytes data = 5;
+}
+
+message CleanRequest {
+  int32 days = 1;
+}
+
+message CleanResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 deleted = 3;
+}

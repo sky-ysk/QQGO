@@ -66,6 +66,8 @@ func (m *mockService) RecallMessage(qq, messageID int64) error                  
 func (m *mockService) SearchMessages(myQQ int64, keyword string, targetQQ int64, groupID string, limit int) (*model.SearchResponse, error) {
 	return nil, nil
 }
+func (m *mockService) BackupDB() ([]byte, string, error) { return nil, "", nil }
+func (m *mockService) CleanMessages(days int) (int64, error) { return 0, nil }
 
 func TestConnectionLimit(t *testing.T) {
 	svc := &mockService{}
