@@ -76,3 +76,27 @@ func TestGenerateRefreshToken(t *testing.T) {
 		t.Fatalf("expected 64 chars, got %d", len(token1))
 	}
 }
+
+func TestInitJWTEmptySecret(t *testing.T) {
+	InitJWT(config.JWTConfig{Secret: "", AccessTTL: 900, RefreshTTLDays: 7})
+
+	token, err := GenerateAccessToken(10001)
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+
+	qq, err := ValidateAccessToken(token)
+	if err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+	if qq != 10001 {
+		t.Fatalf("expected qq 10001, got %d", qq)
+	}
+}
+
+func TestGetRefreshTTLDays(t *testing.T) {
+	InitJWT(config.JWTConfig{Secret: "test", AccessTTL: 900, RefreshTTLDays: 14})
+	if GetRefreshTTLDays() != 14 {
+		t.Fatalf("expected 14, got %d", GetRefreshTTLDays())
+	}
+}

@@ -2,6 +2,36 @@
 
 ---
 
+## [v0.12] — 2026-06-03 / branch: `main`
+
+### Added
+- **FTS5 测试支持**：`mattn/go-sqlite3` 内置 FTS5，运行测试时加 `-tags fts5` 即可启用全文搜索测试
+- **miniredis 依赖**：`github.com/alicebob/miniredis/v2`，用于 Redis 在线状态和 PubSub 的内存 mock 测试
+- **Handler WebSocket 测试框架**：`httptest.NewServer` + gorilla websocket 客户端，支持完整的 protobuf 消息收发
+- **Service 层测试**：+25 个测试（ValidateToken、GetOfflineMessages、MarkDelivered、GetHistory、RejectFriend、SearchUsers、MoveFriendGroup、GetFriendGroups、SetRemark、CreateFriendGroup、DeleteFriendGroup、BackupDB、错误路径等）
+- **JWT 测试**：+2 个测试（InitJWT 空密钥自动生成、GetRefreshTTLDays）
+- **Middleware 测试**：+14 个测试（OnlineTracker 全部方法、PubSubRouter 真实发布/订阅/自身消息跳过/非法数据）
+- **Handler 测试**：+40 个测试（好友操作 11 个、群组操作 6 个、消息操作 7 个、账号操作 6 个、未登录拦截 27 个子测试）
+
+### Changed
+- **internal/service/chat_test.go**：从 1450 行扩展至 ~2200 行
+- **internal/service/jwt_test.go**：从 78 行扩展至 ~95 行
+- **internal/middleware/online_test.go**：从 23 行扩展至 ~130 行
+- **internal/middleware/pubsub_test.go**：从 15 行扩展至 ~200 行
+- **internal/handler/ws_test.go**：从 89 行扩展至 ~1200 行，mockService 支持可配置返回值
+- **go.mod**：新增 `github.com/alicebob/miniredis/v2 v2.38.0`
+
+### Verified
+- 编译通过：`go build ./...`
+- 单元测试：全部通过
+  - `internal/service`：90.4%（之前 60.8%）
+  - `internal/middleware`：98.9%（之前 41.5%）
+  - `internal/handler`：74.9%（之前 1.2%）
+- 集成测试：8/8 通过
+- 运行命令：`go test -tags fts5 ./internal/... ./cmd/client/`
+
+---
+
 ## [v0.11] — 2026-06-03 / branch: `main`
 
 ### Added

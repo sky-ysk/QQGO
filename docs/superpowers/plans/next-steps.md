@@ -1,6 +1,6 @@
 # 下一步开发计划
 
-**当前版本：** v0.11（已完成，已合并到 main）
+**当前版本：** v0.12（测试覆盖率提升已完成）
 **更新日期：** 2026-06-03
 
 ---
@@ -12,6 +12,50 @@
 | P3 | **桌面端 GUI** | Wails 或 Fyne 桌面客户端 | 大 |
 
 > **已完成：** 分布式扩展（Redis PubSub）✅、在线状态（Redis 缓存）✅、数据库管理接口 ✅、JWT 双 token ✅、Protobuf 协议 ✅、单元测试覆盖 ✅
+
+---
+
+## v0.12 测试覆盖率提升（2026-06-03）
+
+### 覆盖率变化
+
+| 包 | 之前 | 之后 | 提升 |
+|---|------|------|------|
+| `internal/service` | 60.8% | **90.4%** | +29.6% |
+| `internal/middleware` | 41.5% | **98.9%** | +57.4% |
+| `internal/handler` | 1.2% | **74.9%** | +73.7% |
+| `cmd/client` | 集成测试 8/8 | 集成测试 8/8 | 不变 |
+
+### 关键技术决策
+
+1. **FTS5 支持**：`mattn/go-sqlite3` 内置 FTS5，只需加 build tag `-tags fts5`，无需 Docker
+2. **Redis 测试**：使用 `miniredis`（内存 Redis mock），比 Docker 更快更稳定
+3. **Handler 测试**：使用 `httptest.NewServer` + gorilla websocket 客户端，覆盖 40+ 个 handler 函数
+
+### 新增测试文件
+
+- `internal/service/chat_test.go`：+25 个测试（ValidateToken、GetOfflineMessages、MarkDelivered、GetHistory、RejectFriend、SearchUsers、MoveFriendGroup、GetFriendGroups、SetRemark、CreateFriendGroup、DeleteFriendGroup、BackupDB 等）
+- `internal/service/jwt_test.go`：+2 个测试（InitJWT 空密钥、GetRefreshTTLDays）
+- `internal/middleware/online_test.go`：+7 个测试（Set/Get/Refresh/Count/多实例隔离）
+- `internal/middleware/pubsub_test.go`：+7 个测试（真实发布/订阅、自身消息跳过、非法 JSON/Protobuf）
+- `internal/handler/ws_test.go`：+40 个测试（好友/群组/历史/搜索/密码/黑名单/文件/撤回/备份/清理/未登录拦截）
+
+### 运行测试
+
+```bash
+# 完整测试（推荐）
+go test -tags fts5 ./internal/... ./cmd/client/
+
+# 带覆盖率
+go test -tags fts5 -cover ./internal/...
+
+# 仅 handler
+go test -v ./internal/handler/
+```
+
+### 剩余未覆盖（~25% handler）
+
+主要是 `sendToUser`/`broadcastToGroup`（需要多连接并发场景）、`pushOfflineMessages`（需要离线消息推送时序）、`notifyFriendRequest/Accepted`（需要双客户端在线通知）——这些更适合集成测试而非单元测试。
 
 ---
 
@@ -33,13 +77,18 @@
 继续开发 QQGO 项目。
 
 项目路径：/Users/yangshikang.6/Desktop/Code/Go/QQGO
-当前版本：v0.11（Protobuf 协议替换已完成）
+当前版本：v0.12（测试覆盖率提升已完成）
 
 请先阅读以下文件了解项目状态：
 - docs/superpowers/plans/next-steps.md（本文件）
 - REQUIREMENTS.md（需求清单）
 - CHANGELOG.md（版本历史）
 - CLAUDE.md（开发规范）
+
+当前覆盖率：
+- internal/service：90.4%
+- internal/middleware：98.9%
+- internal/handler：74.9%
 
 按照 next-steps.md 的建议，下一步是开发桌面端 GUI（P3）。
 
@@ -70,27 +119,6 @@
 4. 与 CLI 客户端共存
 
 请先进行技术选型分析，然后设计桌面端架构。
-```
-
-### 继续提升测试覆盖率
-
-```
-继续提升 QQGO 项目的单元测试覆盖率。
-
-项目路径：/Users/yangshikang.6/Desktop/Code/Go/QQGO
-
-当前覆盖率：
-- internal/service：60.8%（核心业务逻辑）
-- internal/handler：1.2%（需要 WebSocket 环境，由集成测试覆盖）
-- internal/middleware：41.5%
-- cmd/client：集成测试 8/8 通过
-
-重点提升方向：
-1. internal/service 中未覆盖的函数（SearchMessages、getContextMessages 等）
-2. internal/middleware 的 pubsub.go、ratelimit.go
-3. 边界条件和错误路径测试
-
-请运行 `go test -cover ./internal/...` 查看详细覆盖率，然后补充测试。
 ```
 
 ---

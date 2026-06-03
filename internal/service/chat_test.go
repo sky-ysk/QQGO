@@ -1448,3 +1448,760 @@ func TestGetSessionsEmpty(t *testing.T) {
 		t.Fatalf("expected 0 sessions, got %d", len(sessions))
 	}
 }
+
+func TestValidateToken(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq, _ := svc.Register("alice", "password123")
+	accessTok, _, _ := svc.Login(qq, "password123")
+
+	valid, err := svc.ValidateToken(qq, accessTok)
+	if err != nil {
+		t.Fatalf("validate token failed: %v", err)
+	}
+	if !valid {
+		t.Fatal("should be valid")
+	}
+
+	valid, err = svc.ValidateToken(qq+1, accessTok)
+	if err != nil || valid {
+		t.Fatal("should be invalid for wrong qq")
+	}
+
+	valid, err = svc.ValidateToken(qq, "garbage")
+	if err == nil && valid {
+		t.Fatal("should fail for garbage token")
+	}
+}
+
+func TestGetOfflineMessages(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "msg1"})
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "msg2"})
+
+	msgs, err := svc.GetOfflineMessages(qq2)
+	if err != nil {
+		t.Fatalf("get offline messages failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 offline messages, got %d", len(msgs))
+	}
+	if msgs[0].Content != "msg1" {
+		t.Fatalf("expected msg1, got %s", msgs[0].Content)
+	}
+
+	msgs, err = svc.GetOfflineMessages(qq1)
+	if err != nil {
+		t.Fatalf("get offline messages for sender failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("sender should have 0 offline messages, got %d", len(msgs))
+	}
+}
+
+func TestMarkDelivered(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "hello"})
+
+	var msg model.Message
+	db.Where("from_qq = ? AND to_qq = ?", qq1, qq2).First(&msg)
+	if msg.Delivered {
+		t.Fatal("message should not be delivered yet")
+	}
+
+	err := svc.MarkDelivered(msg.ID)
+	if err != nil {
+		t.Fatalf("mark delivered failed: %v", err)
+	}
+
+	db.Where("id = ?", msg.ID).First(&msg)
+	if !msg.Delivered {
+		t.Fatal("message should be marked as delivered")
+	}
+
+	err = svc.MarkDelivered(99999)
+	if err != nil {
+		t.Fatalf("mark delivered for nonexistent should not error: %v", err)
+	}
+}
+
+func TestGetHistory(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+	qq3, _ := svc.Register("charlie", "password789")
+
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "to bob"})
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq2, ToQQ: qq1, Content: "from bob"})
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq3, Content: "to charlie"})
+
+	msgs, err := svc.GetHistory(nil, qq1, 100)
+	if err != nil {
+		t.Fatalf("get history failed: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages for qq1, got %d", len(msgs))
+	}
+
+	msgs, err = svc.GetHistory(nil, qq2, 100)
+	if err != nil {
+		t.Fatalf("get history for bob failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages for bob, got %d", len(msgs))
+	}
+
+	msgs, err = svc.GetHistory(nil, qq1, 2)
+	if err != nil {
+		t.Fatalf("get history with limit failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages with limit=2, got %d", len(msgs))
+	}
+
+	msgs, err = svc.GetHistory(nil, qq3, 100)
+	if err != nil {
+		t.Fatalf("get history for charlie failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message for charlie, got %d", len(msgs))
+	}
+}
+
+func TestRejectFriend(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	err := svc.SendFriendRequest(qq1, qq2, "hello")
+	if err != nil {
+		t.Fatalf("send friend request failed: %v", err)
+	}
+
+	err = svc.RejectFriend(qq2, qq1)
+	if err != nil {
+		t.Fatalf("reject friend failed: %v", err)
+	}
+
+	var f model.Friend
+	db.Where("qq = ? AND friend_qq = ?", qq1, qq2).First(&f)
+	if f.Status != model.FriendStatusRejected {
+		t.Fatalf("expected rejected status, got %d", f.Status)
+	}
+
+	if svc.IsFriend(qq1, qq2) {
+		t.Fatal("should not be friends after rejection")
+	}
+
+	err = svc.RejectFriend(qq2, qq1)
+	if err != ErrNotFriend {
+		t.Fatalf("expected ErrNotFriend for already rejected, got: %v", err)
+	}
+
+	err = svc.RejectFriend(qq2, 99999)
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound for nonexistent user, got: %v", err)
+	}
+}
+
+func TestSearchUsers(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("searchuser_unique_alpha", "password123")
+	qq2, _ := svc.Register("searchuser_unique_beta", "password456")
+	_, _ = svc.Register("searchuser_unique_gamma", "password789")
+
+	online := func(qq int64) bool { return qq == qq1 }
+
+	results, err := svc.SearchUsers("searchuser_unique", online)
+	if err != nil {
+		t.Fatalf("search users failed: %v", err)
+	}
+	if len(results) < 3 {
+		t.Fatalf("expected at least 3 results, got %d", len(results))
+	}
+
+	foundOnline := false
+	for _, r := range results {
+		if r.QQNumber == qq1 && r.Online {
+			foundOnline = true
+		}
+	}
+	if !foundOnline {
+		t.Fatal("qq1 should be online")
+	}
+
+	results, err = svc.SearchUsers(fmt.Sprintf("%d", qq2), online)
+	if err != nil {
+		t.Fatalf("search by qq number failed: %v", err)
+	}
+	found := false
+	for _, r := range results {
+		if r.QQNumber == qq2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("should find user by qq number %d", qq2)
+	}
+
+	results, err = svc.SearchUsers("zzz_nonexistent_xyz_999", online)
+	if err != nil {
+		t.Fatalf("search for nonexistent failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestMoveFriendGroup(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	svc.SendFriendRequest(qq1, qq2, "hello")
+	svc.AcceptFriend(qq2, qq1)
+
+	err := svc.MoveFriendGroup(qq1, qq2, "我的好友")
+	if err != nil {
+		t.Fatalf("move to default group failed: %v", err)
+	}
+
+	err = svc.MoveFriendGroup(qq1, qq2, "同事")
+	if err != ErrGroupNotFound {
+		t.Fatalf("expected ErrGroupNotFound for nonexistent group, got: %v", err)
+	}
+
+	svc.CreateFriendGroup(qq1, "同事")
+
+	err = svc.MoveFriendGroup(qq1, qq2, "同事")
+	if err != nil {
+		t.Fatalf("move to existing group failed: %v", err)
+	}
+
+	var f model.Friend
+	db.Where("qq = ? AND friend_qq = ?", qq1, qq2).First(&f)
+	if f.GroupName != "同事" {
+		t.Fatalf("expected group '同事', got '%s'", f.GroupName)
+	}
+
+	err = svc.MoveFriendGroup(qq1, 99999, "同事")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+
+	err = svc.MoveFriendGroup(qq1, qq2+100, "同事")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound for nonexistent friend, got: %v", err)
+	}
+}
+
+func TestGetFriendGroups(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	groups, err := svc.GetFriendGroups(qq1)
+	if err != nil {
+		t.Fatalf("get friend groups failed: %v", err)
+	}
+	if len(groups) != 1 || groups[0] != "我的好友" {
+		t.Fatalf("expected ['我的好友'], got %v", groups)
+	}
+
+	svc.CreateFriendGroup(qq1, "同事")
+	svc.CreateFriendGroup(qq1, "家人")
+
+	groups, err = svc.GetFriendGroups(qq1)
+	if err != nil {
+		t.Fatalf("get friend groups failed: %v", err)
+	}
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d: %v", len(groups), groups)
+	}
+
+	qq2, _ := svc.Register("bob", "password456")
+	svc.SendFriendRequest(qq1, qq2, "hi")
+	svc.AcceptFriend(qq2, qq1)
+	db.Model(&model.Friend{}).Where("qq = ? AND friend_qq = ?", qq1, qq2).Update("group_name", "同学")
+
+	groups, err = svc.GetFriendGroups(qq1)
+	if err != nil {
+		t.Fatalf("get friend groups failed: %v", err)
+	}
+	foundTongxue := false
+	for _, g := range groups {
+		if g == "同学" {
+			foundTongxue = true
+		}
+	}
+	if !foundTongxue {
+		t.Fatalf("expected '同学' from friend records, got %v", groups)
+	}
+}
+
+func TestSetRemark(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	err := svc.SetRemark(qq1, qq2, "小鲍")
+	if err != ErrNotFriend {
+		t.Fatalf("expected ErrNotFriend, got: %v", err)
+	}
+
+	svc.SendFriendRequest(qq1, qq2, "hello")
+	svc.AcceptFriend(qq2, qq1)
+
+	err = svc.SetRemark(qq1, qq2, "小鲍")
+	if err != nil {
+		t.Fatalf("set remark failed: %v", err)
+	}
+
+	var f model.Friend
+	db.Where("qq = ? AND friend_qq = ?", qq1, qq2).First(&f)
+	if f.Remark != "小鲍" {
+		t.Fatalf("expected remark '小鲍', got '%s'", f.Remark)
+	}
+
+	err = svc.SetRemark(qq1, 99999, "test")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+func TestCreateFriendGroup(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.CreateFriendGroup(qq1, "同事")
+	if err != nil {
+		t.Fatalf("create friend group failed: %v", err)
+	}
+
+	err = svc.CreateFriendGroup(qq1, "同事")
+	if err == nil {
+		t.Fatal("duplicate group should fail")
+	}
+
+	err = svc.CreateFriendGroup(qq1, "")
+	if err == nil {
+		t.Fatal("empty name should fail")
+	}
+
+	err = svc.CreateFriendGroup(qq1, "待处理")
+	if err == nil {
+		t.Fatal("'待处理' should fail")
+	}
+
+	err = svc.CreateFriendGroup(qq1, "我的好友")
+	if err == nil {
+		t.Fatal("'我的好友' should fail")
+	}
+}
+
+func TestDeleteFriendGroup(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	err := svc.DeleteFriendGroup(qq1, "我的好友")
+	if err == nil {
+		t.Fatal("cannot delete default group")
+	}
+
+	err = svc.DeleteFriendGroup(qq1, "nonexistent")
+	if err != ErrGroupNotFound {
+		t.Fatalf("expected ErrGroupNotFound, got: %v", err)
+	}
+
+	svc.CreateFriendGroup(qq1, "同事")
+
+	err = svc.DeleteFriendGroup(qq1, "同事")
+	if err != nil {
+		t.Fatalf("delete empty group failed: %v", err)
+	}
+
+	svc.CreateFriendGroup(qq1, "家人")
+	svc.SendFriendRequest(qq1, qq2, "hi")
+	svc.AcceptFriend(qq2, qq1)
+	svc.MoveFriendGroup(qq1, qq2, "家人")
+
+	err = svc.DeleteFriendGroup(qq1, "家人")
+	if err != ErrGroupNotEmpty {
+		t.Fatalf("expected ErrGroupNotEmpty, got: %v", err)
+	}
+}
+
+func TestBackupDB(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	db.AutoMigrate(&model.User{}, &model.Message{})
+	InitJWT(config.JWTConfig{Secret: "test-secret", AccessTTL: 900, RefreshTTLDays: 7})
+
+	svc := NewChatService(db, dbPath)
+
+	svc.Register("alice", "password123")
+
+	data, filename, err := svc.BackupDB()
+	if err != nil {
+		t.Fatalf("backup failed: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("backup data should not be empty")
+	}
+	if filename == "" {
+		t.Fatal("backup filename should not be empty")
+	}
+	if len(filename) < 10 {
+		t.Fatalf("unexpected filename: %s", filename)
+	}
+}
+
+func TestBackupDBInvalidPath(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "/nonexistent/path/db.sqlite")
+
+	_, _, err := svc.BackupDB()
+	if err == nil {
+		t.Fatal("backup should fail for invalid path")
+	}
+}
+
+func TestGetHistoryExcludesGroupMessages(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "private msg"})
+
+	groupID, _ := svc.CreateGroup("test", qq1)
+	svc.JoinGroup(groupID, qq2)
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, GroupID: groupID, Content: "group msg"})
+
+	msgs, err := svc.GetHistory(nil, qq1, 100)
+	if err != nil {
+		t.Fatalf("get history failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 private message, got %d", len(msgs))
+	}
+	if msgs[0].Content != "private msg" {
+		t.Fatalf("expected 'private msg', got '%s'", msgs[0].Content)
+	}
+}
+
+func TestRecallMessageExpired(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "old msg"})
+
+	var msg model.Message
+	db.Where("from_qq = ? AND to_qq = ?", qq1, qq2).First(&msg)
+	db.Model(&msg).Update("created_at", time.Now().Add(-3*time.Minute))
+
+	err := svc.RecallMessage(qq1, msg.ID)
+	if err == nil {
+		t.Fatal("should fail for message older than 2 minutes")
+	}
+}
+
+func TestRecallMessageAlreadyRecalled(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	svc.HandleMessage(nil, &model.Message{MsgType: model.MsgTypeText, FromQQ: qq1, ToQQ: qq2, Content: "hello"})
+
+	var msg model.Message
+	db.Where("from_qq = ? AND to_qq = ?", qq1, qq2).First(&msg)
+
+	svc.RecallMessage(qq1, msg.ID)
+
+	err := svc.RecallMessage(qq1, msg.ID)
+	if err == nil {
+		t.Fatal("should fail for already recalled message")
+	}
+}
+
+func TestRecallMessageNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.RecallMessage(qq1, 99999)
+	if err == nil {
+		t.Fatal("should fail for nonexistent message")
+	}
+}
+
+func TestSendFriendRequestSelf(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.SendFriendRequest(qq1, qq1, "self")
+	if err == nil {
+		t.Fatal("should fail when adding self")
+	}
+}
+
+func TestSendFriendRequestNonexistentUser(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.SendFriendRequest(qq1, 99999, "hello")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+func TestDeleteFriendNonexistent(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.DeleteFriend(qq1, 99999)
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+func TestBlockUserNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.BlockUser(qq1, 99999)
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+func TestChangePasswordUserNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	_, _, err := svc.ChangePassword(99999, "old", "new")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+func TestJoinGroupFull(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	groupID, _ := svc.CreateGroup("small group", qq1)
+	db.Model(&model.Group{}).Where("group_id = ?", groupID).Update("max_members", 1)
+
+	err := svc.JoinGroup(groupID, qq2)
+	if err == nil {
+		t.Fatal("should fail when group is full")
+	}
+}
+
+func TestJoinGroupNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.JoinGroup("nonexistent", qq1)
+	if err != ErrGroupNotFound {
+		t.Fatalf("expected ErrGroupNotFound, got: %v", err)
+	}
+}
+
+func TestLeaveGroupNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	err := svc.LeaveGroup("nonexistent", qq1)
+	if err != ErrGroupNotFound {
+		t.Fatalf("expected ErrGroupNotFound, got: %v", err)
+	}
+}
+
+func TestLeaveGroupNotMember(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+	qq2, _ := svc.Register("bob", "password456")
+
+	groupID, _ := svc.CreateGroup("test", qq1)
+
+	err := svc.LeaveGroup(groupID, qq2)
+	if err == nil {
+		t.Fatal("non-member should not be able to leave")
+	}
+}
+
+func TestGetGroupListEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "password123")
+
+	groups, err := svc.GetGroupList(qq1)
+	if err != nil {
+		t.Fatalf("get group list failed: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected 0 groups, got %d", len(groups))
+	}
+}
+
+func TestSearchMessagesLimitCapping(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	qq2, _ := svc.Register("bob", "pass456")
+
+	for i := 0; i < 5; i++ {
+		svc.HandleMessage(nil, &model.Message{FromQQ: qq1, ToQQ: qq2, Content: fmt.Sprintf("test msg %d", i), MsgType: model.MsgTypeText})
+	}
+
+	resp, err := svc.SearchMessages(qq1, "test", 0, "", 0)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total > 50 {
+		t.Fatalf("default limit should be 50, got %d results", resp.Total)
+	}
+
+	resp, err = svc.SearchMessages(qq1, "test", 0, "", 200)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total > 100 {
+		t.Fatalf("limit should be capped at 100, got %d results", resp.Total)
+	}
+}
+
+func TestSearchMessagesGroupContext(t *testing.T) {
+	db := setupTestDB(t)
+	if !ftsAvailable(db) {
+		t.Skip("FTS5 not available in test environment")
+	}
+	svc := NewChatService(db, "")
+
+	qq1, _ := svc.Register("alice", "pass123")
+	groupID, _ := svc.CreateGroup("ctx group", qq1)
+
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, GroupID: groupID, Content: "before message", MsgType: model.MsgTypeText})
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, GroupID: groupID, Content: "target keyword here", MsgType: model.MsgTypeText})
+	svc.HandleMessage(nil, &model.Message{FromQQ: qq1, GroupID: groupID, Content: "after message", MsgType: model.MsgTypeText})
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, err := svc.SearchMessages(qq1, "keyword", 0, groupID, 50)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if resp.Total < 1 {
+		t.Fatal("expected at least 1 result")
+	}
+
+	result := resp.Results[0]
+	if result.ContextBefore == nil {
+		t.Fatal("expected context before for group message")
+	}
+	if result.ContextBefore.Content != "before message" {
+		t.Fatalf("unexpected context before: %s", result.ContextBefore.Content)
+	}
+	if result.ContextAfter == nil {
+		t.Fatal("expected context after for group message")
+	}
+	if result.ContextAfter.Content != "after message" {
+		t.Fatalf("unexpected context after: %s", result.ContextAfter.Content)
+	}
+}
+
+func TestLoginUserNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	_, _, err := svc.Login(99999, "password")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+func TestLoginWrongPassword(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	qq, _ := svc.Register("alice", "password123")
+
+	_, _, err := svc.Login(qq, "wrongpassword")
+	if err != ErrAuthFailed {
+		t.Fatalf("expected ErrAuthFailed, got: %v", err)
+	}
+}
+
+func TestGetUserByQQNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewChatService(db, "")
+
+	_, err := svc.GetUserByQQ(99999)
+	if err == nil {
+		t.Fatal("expected error for nonexistent user")
+	}
+}
