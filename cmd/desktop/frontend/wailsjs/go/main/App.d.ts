@@ -17,6 +17,8 @@ export function Login(arg1:number,arg2:string):Promise<void>;
 
 export function Register(arg1:string,arg2:string):Promise<void>;
 
+export function SearchUsers(arg1:string):Promise<void>;
+
 export function SendGroupMessage(arg1:string,arg2:string):Promise<void>;
 
 export function SendMessage(arg1:number,arg2:string):Promise<void>;

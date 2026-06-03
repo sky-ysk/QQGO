@@ -1,12 +1,13 @@
 import {api} from '../api.js';
 import {renderSidebar} from '../components/sidebar.js';
 import {renderSessions} from '../components/sessions.js';
+import {renderFriends, bindFriendEvents} from '../components/friends.js';
 import {renderMessages, scrollToBottom} from '../components/messages.js';
 
 let eventsBound = false;
 
 export function initChat() {
-  renderChat();
+  renderChatView();
   if (!eventsBound) {
     eventsBound = true;
     registerEvents();
@@ -15,16 +16,55 @@ export function initChat() {
   api.getFriendList();
 }
 
-export function renderChat() {
+export function renderChatView() {
+  const activeView = window.store.get('activeView') || 'sessions';
+  const middlePanel = activeView === 'friends' ? renderFriends() : renderSessions();
+
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="main-window">
       ${renderSidebar()}
-      ${renderSessions()}
+      ${middlePanel}
       ${renderMessages()}
     </div>
   `;
-  bindChatEvents();
+  bindSidebarEvents();
+  if (activeView === 'friends') {
+    bindFriendEvents();
+  } else {
+    bindChatEvents();
+  }
+}
+
+function bindSidebarEvents() {
+  document.querySelectorAll('.sidebar .nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const view = item.dataset.view;
+      if (view === 'logout') {
+        doLogout();
+        return;
+      }
+      if (view === 'sessions' || view === 'friends') {
+        window.store.set('activeView', view);
+        if (view === 'friends') {
+          api.getFriendList();
+        }
+        renderChatView();
+      }
+    });
+  });
+}
+
+function doLogout() {
+  api.disconnect();
+  window.store.set('currentUser', null);
+  window.store.set('sessions', []);
+  window.store.set('friends', []);
+  window.store.set('currentSession', null);
+  window.store.set('messages', []);
+  window.store.set('connected', false);
+  window.store.set('activeView', 'sessions');
+  window.showLogin();
 }
 
 function bindChatEvents() {
@@ -42,7 +82,7 @@ function bindChatEvents() {
       if (s) session.nickname = s.nickname;
       window.store.set('currentSession', session);
       window.store.set('messages', []);
-      renderChat();
+      renderChatView();
       if (type === 'private') {
         api.getHistory(targetQQ, 0, 30);
       } else if (type === 'group') {
@@ -65,7 +105,7 @@ function bindChatEvents() {
       messages.push({ fromQQ: window.store.get('currentUser').qq, content: content, createdAt: Math.floor(Date.now() / 1000) });
       window.store.set('messages', messages);
       input.value = '';
-      renderChat();
+      renderChatView();
       setTimeout(scrollToBottom, 50);
     };
     sendBtn.addEventListener('click', send);
@@ -78,14 +118,28 @@ function bindChatEvents() {
 function registerEvents() {
   api.onSessionsUpdated((sessions) => {
     window.store.set('sessions', sessions);
-    if (document.querySelector('.main-window')) { renderChat(); }
+    if (document.querySelector('.main-window')) { renderChatView(); }
   });
 
-  api.onFriendsLoaded((friends) => { window.store.set('friends', friends); });
+  api.onFriendsLoaded((friends) => {
+    window.store.set('friends', friends);
+    if (document.querySelector('.main-window') && window.store.get('activeView') === 'friends') {
+      renderChatView();
+    }
+  });
+
+  api.onSearchResults((results) => {
+    window.store.set('searchResults', results);
+    if (document.querySelector('.main-window') && window.store.get('activeView') === 'friends') {
+      renderChatView();
+      const input = document.getElementById('friend-search-input');
+      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    }
+  });
 
   api.onHistoryLoaded((messages) => {
     window.store.set('messages', messages);
-    if (document.querySelector('.main-window')) { renderChat(); setTimeout(scrollToBottom, 50); }
+    if (document.querySelector('.main-window')) { renderChatView(); setTimeout(scrollToBottom, 50); }
   });
 
   api.onMessageReceived((msg) => {
@@ -96,7 +150,7 @@ function registerEvents() {
          (current.type === 'group' && msg.groupID === current.groupID))) {
       messages.push(msg);
       window.store.set('messages', messages);
-      if (document.querySelector('.main-window')) { renderChat(); setTimeout(scrollToBottom, 50); }
+      if (document.querySelector('.main-window')) { renderChatView(); setTimeout(scrollToBottom, 50); }
     }
     api.getSessions();
   });

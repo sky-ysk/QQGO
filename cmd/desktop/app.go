@@ -180,6 +180,17 @@ func (a *App) handleMessage(wire *protocol.WireMessage) {
 		}
 		runtime.EventsEmit(a.ctx, "friends-loaded", friends)
 
+	case *protocol.WireMessage_FriendSearchResponse:
+		results := make([]map[string]interface{}, 0, len(p.FriendSearchResponse.Results))
+		for _, r := range p.FriendSearchResponse.Results {
+			results = append(results, map[string]interface{}{
+				"qqNumber": r.QqNumber,
+				"nickname": r.Nickname,
+				"online":   r.Online,
+			})
+		}
+		runtime.EventsEmit(a.ctx, "search-results", results)
+
 	case *protocol.WireMessage_HistoryResponse:
 		msgs := make([]map[string]interface{}, 0, len(p.HistoryResponse.Messages))
 		for _, m := range p.HistoryResponse.Messages {
@@ -312,6 +323,17 @@ func (a *App) GetGroupHistory(groupID string, offset, limit int32) error {
 				GroupId: groupID,
 				Offset:  offset,
 				Limit:   limit,
+			},
+		},
+	})
+}
+
+func (a *App) SearchUsers(keyword string) error {
+	return a.sendWire(&protocol.WireMessage{
+		ClientSeq: a.nextSeq(),
+		Payload: &protocol.WireMessage_FriendSearchRequest{
+			FriendSearchRequest: &protocol.FriendSearchRequest{
+				Keyword: keyword,
 			},
 		},
 	})

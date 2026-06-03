@@ -83,3 +83,13 @@ body {
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: 14px; }
 
 .connection-banner { position: fixed; top: 0; left: 0; right: 0; background: #FF6B6B; color: white; text-align: center; padding: 8px; font-size: 13px; z-index: 1000; }
+
+.friend-group-name { padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--text-secondary); background: #FAFAFA; border-bottom: 1px solid var(--border); }
+.friend-item { padding: 10px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; border-left: 3px solid transparent; }
+.friend-item:hover { background: #F5F5F5; }
+.friend-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 13px; flex-shrink: 0; position: relative; }
+.status-dot { position: absolute; bottom: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: #CCC; border: 2px solid white; }
+.status-dot.online { background: #07C160; }
+.friend-info { flex: 1; min-width: 0; }
+.friend-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.friend-qq { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }

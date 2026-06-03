@@ -7,6 +7,8 @@ class Store {
       currentSession: null,
       messages: [],
       connected: false,
+      activeView: 'sessions',
+      searchResults: [],
     };
     this.listeners = {};
   }

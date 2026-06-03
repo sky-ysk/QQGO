@@ -34,6 +34,10 @@ export function Register(arg1, arg2) {
   return window['go']['main']['App']['Register'](arg1, arg2);
 }
 
+export function SearchUsers(arg1) {
+  return window['go']['main']['App']['SearchUsers'](arg1);
+}
+
 export function SendGroupMessage(arg1, arg2) {
   return window['go']['main']['App']['SendGroupMessage'](arg1, arg2);
 }
