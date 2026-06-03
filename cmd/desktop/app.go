@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -337,4 +340,58 @@ func (a *App) SearchUsers(keyword string) error {
 			},
 		},
 	})
+}
+
+type savedCredentials struct {
+	Addr     string `json:"addr"`
+	QQ       int64  `json:"qq"`
+	Password string `json:"password"`
+}
+
+func (a *App) credentialsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".qqgo")
+	os.MkdirAll(dir, 0700)
+	return filepath.Join(dir, "credentials.json")
+}
+
+func (a *App) SaveCredentials(addr string, qq int64, password string) error {
+	path := a.credentialsPath()
+	if path == "" {
+		return fmt.Errorf("cannot determine home directory")
+	}
+	creds := savedCredentials{Addr: addr, QQ: qq, Password: password}
+	data, err := json.Marshal(creds)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+func (a *App) LoadCredentials() (string, int64, string, error) {
+	path := a.credentialsPath()
+	if path == "" {
+		return "", 0, "", fmt.Errorf("cannot determine home directory")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0, "", err
+	}
+	var creds savedCredentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return "", 0, "", err
+	}
+	return creds.Addr, creds.QQ, creds.Password, nil
+}
+
+func (a *App) ClearCredentials() error {
+	path := a.credentialsPath()
+	if path == "" {
+		return nil
+	}
+	os.Remove(path)
+	return nil
 }

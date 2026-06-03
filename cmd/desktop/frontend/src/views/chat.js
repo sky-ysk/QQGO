@@ -5,6 +5,7 @@ import {renderFriends, bindFriendEvents} from '../components/friends.js';
 import {renderMessages, scrollToBottom} from '../components/messages.js';
 
 let eventsBound = false;
+const PAGE_SIZE = 30;
 
 export function initChat() {
   renderChatView();
@@ -34,6 +35,7 @@ export function renderChatView() {
   } else {
     bindChatEvents();
   }
+  bindScrollLoadMore();
 }
 
 function bindSidebarEvents() {
@@ -57,6 +59,7 @@ function bindSidebarEvents() {
 
 function doLogout() {
   api.disconnect();
+  api.clearCredentials();
   window.store.set('currentUser', null);
   window.store.set('sessions', []);
   window.store.set('friends', []);
@@ -64,6 +67,9 @@ function doLogout() {
   window.store.set('messages', []);
   window.store.set('connected', false);
   window.store.set('activeView', 'sessions');
+  window.store.set('historyOffset', 0);
+  window.store.set('historyHasMore', true);
+  window.store.set('historyLoading', false);
   window.showLogin();
 }
 
@@ -82,11 +88,14 @@ function bindChatEvents() {
       if (s) session.nickname = s.nickname;
       window.store.set('currentSession', session);
       window.store.set('messages', []);
+      window.store.set('historyOffset', 0);
+      window.store.set('historyHasMore', true);
+      window.store.set('historyLoading', true);
       renderChatView();
       if (type === 'private') {
-        api.getHistory(targetQQ, 0, 30);
+        api.getHistory(targetQQ, 0, PAGE_SIZE);
       } else if (type === 'group') {
-        api.getGroupHistory(groupID, 0, 30);
+        api.getGroupHistory(groupID, 0, PAGE_SIZE);
       }
     });
   });
@@ -115,6 +124,25 @@ function bindChatEvents() {
   }
 }
 
+function bindScrollLoadMore() {
+  const container = document.getElementById('messages-container');
+  if (!container) return;
+  container.addEventListener('scroll', () => {
+    if (container.scrollTop > 50) return;
+    if (window.store.get('historyLoading')) return;
+    if (!window.store.get('historyHasMore')) return;
+    const current = window.store.get('currentSession');
+    if (!current) return;
+    const offset = window.store.get('historyOffset') || 0;
+    window.store.set('historyLoading', true);
+    if (current.type === 'private') {
+      api.getHistory(current.targetQQ, offset, PAGE_SIZE);
+    } else if (current.type === 'group') {
+      api.getGroupHistory(current.groupID, offset, PAGE_SIZE);
+    }
+  });
+}
+
 function registerEvents() {
   api.onSessionsUpdated((sessions) => {
     window.store.set('sessions', sessions);
@@ -138,8 +166,34 @@ function registerEvents() {
   });
 
   api.onHistoryLoaded((messages) => {
-    window.store.set('messages', messages);
-    if (document.querySelector('.main-window')) { renderChatView(); setTimeout(scrollToBottom, 50); }
+    const existing = window.store.get('messages') || [];
+    const offset = window.store.get('historyOffset') || 0;
+
+    if (offset === 0) {
+      window.store.set('messages', messages);
+      window.store.set('historyOffset', messages.length);
+      window.store.set('historyHasMore', messages.length >= PAGE_SIZE);
+      window.store.set('historyLoading', false);
+      if (document.querySelector('.main-window')) { renderChatView(); setTimeout(scrollToBottom, 50); }
+    } else {
+      if (messages.length === 0) {
+        window.store.set('historyHasMore', false);
+        window.store.set('historyLoading', false);
+        return;
+      }
+      const merged = [...messages, ...existing];
+      window.store.set('messages', merged);
+      window.store.set('historyOffset', offset + messages.length);
+      window.store.set('historyHasMore', messages.length >= PAGE_SIZE);
+      window.store.set('historyLoading', false);
+      if (document.querySelector('.main-window')) {
+        renderChatView();
+        const container = document.getElementById('messages-container');
+        if (container) {
+          container.scrollTop = messages.length * 60;
+        }
+      }
+    }
   });
 
   api.onMessageReceived((msg) => {

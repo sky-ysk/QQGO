@@ -38,30 +38,44 @@ export function renderLogin() {
     });
   });
 
-  document.getElementById('login-btn').addEventListener('click', async () => {
+  const loginBtn = document.getElementById('login-btn');
+  loginBtn.addEventListener('click', async () => {
     const addr = document.getElementById('server-addr').value;
     const qq = parseInt(document.getElementById('login-qq').value);
     const password = document.getElementById('login-password').value;
     if (!qq || !password) { alert('请输入 QQ 号和密码'); return; }
+    loginBtn.disabled = true;
+    loginBtn.textContent = '连接中...';
     window.store.set('serverAddr', addr);
     window.store.set('pendingLogin', {qq, password});
     try {
       await api.connect(addr);
       await api.login(qq, password);
-    } catch (err) { alert('连接失败: ' + err); }
+    } catch (err) {
+      loginBtn.disabled = false;
+      loginBtn.textContent = '登录';
+      alert('连接失败: ' + err);
+    }
   });
 
-  document.getElementById('reg-btn').addEventListener('click', async () => {
+  const regBtn = document.getElementById('reg-btn');
+  regBtn.addEventListener('click', async () => {
     const addr = document.getElementById('server-addr').value;
     const nickname = document.getElementById('reg-nickname').value;
     const password = document.getElementById('reg-password').value;
     if (!nickname || !password) { alert('请输入昵称和密码'); return; }
+    regBtn.disabled = true;
+    regBtn.textContent = '注册中...';
     window.store.set('serverAddr', addr);
     window.store.set('pendingRegister', {nickname, password});
     try {
       await api.connect(addr);
       await api.register(nickname, password);
-    } catch (err) { alert('连接失败: ' + err); }
+    } catch (err) {
+      regBtn.disabled = false;
+      regBtn.textContent = '注册';
+      alert('连接失败: ' + err);
+    }
   });
 
   api.onLoginSuccess((data) => {
@@ -69,10 +83,16 @@ export function renderLogin() {
     window.store.set('currentUser', {qq: data.qq, nickname: data.nickname, password: pending ? pending.password : ''});
     window.store.set('connected', true);
     window.store.set('pendingLogin', null);
+    const addr = window.store.get('serverAddr') || 'ws://localhost:8080/ws';
+    api.saveCredentials(addr, data.qq, pending ? pending.password : '');
     window.showChat();
   });
 
-  api.onLoginFailed((data) => { alert('登录失败: ' + data.message); });
+  api.onLoginFailed((data) => {
+    const btn = document.getElementById('login-btn');
+    if (btn) { btn.disabled = false; btn.textContent = '登录'; }
+    alert('登录失败: ' + data.message);
+  });
 
   api.onRegisterSuccess((data) => {
     const pending = window.store.get('pendingRegister');
@@ -81,9 +101,31 @@ export function renderLogin() {
       window.store.set('pendingLogin', {qq: data.qq, password: pending.password});
       api.login(data.qq, pending.password);
     } else {
+      const btn = document.getElementById('reg-btn');
+      if (btn) { btn.disabled = false; btn.textContent = '注册'; }
       alert('注册成功！QQ号: ' + data.qq + '\n请切换到登录页登录');
     }
   });
 
-  api.onRegisterFailed((data) => { alert('注册失败: ' + data.message); });
+  api.onRegisterFailed((data) => {
+    const btn = document.getElementById('reg-btn');
+    if (btn) { btn.disabled = false; btn.textContent = '注册'; }
+    alert('注册失败: ' + data.message);
+  });
+
+  tryAutoLogin();
+}
+
+async function tryAutoLogin() {
+  try {
+    const creds = await api.loadCredentials();
+    if (!creds || !creds.Qq || !creds.Password) return;
+    const addr = creds.Addr || 'ws://localhost:8080/ws';
+    window.store.set('serverAddr', addr);
+    window.store.set('pendingLogin', {qq: creds.Qq, password: creds.Password});
+    await api.connect(addr);
+    await api.login(creds.Qq, creds.Password);
+  } catch (e) {
+    // Auto-login failed silently, stay on login page
+  }
 }

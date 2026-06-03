@@ -93,3 +93,6 @@ body {
 .friend-info { flex: 1; min-width: 0; }
 .friend-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
 .friend-qq { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+
+.history-hint { text-align: center; padding: 8px; font-size: 12px; color: var(--text-secondary); }
+button:disabled { opacity: 0.6; cursor: not-allowed; }

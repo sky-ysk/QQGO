@@ -2,6 +2,8 @@ export function renderMessages() {
   const current = window.store.get('currentSession');
   const messages = window.store.get('messages') || [];
   const currentUser = window.store.get('currentUser');
+  const historyLoading = window.store.get('historyLoading');
+  const historyHasMore = window.store.get('historyHasMore');
 
   if (!current) {
     return '<div class="chat-area"><div class="empty-state">选择一个会话开始聊天</div></div>';
@@ -9,6 +11,13 @@ export function renderMessages() {
 
   const title = current.nickname || current.targetQQ || current.groupID;
   const subtitle = current.type === 'private' ? `<span class="qq">${current.targetQQ}</span>` : '';
+
+  let topHint = '';
+  if (historyLoading) {
+    topHint = '<div class="history-hint">加载中...</div>';
+  } else if (messages.length > 0 && !historyHasMore) {
+    topHint = '<div class="history-hint">没有更多消息了</div>';
+  }
 
   const msgHtml = messages.map(m => {
     const isSelf = m.fromQQ === currentUser.qq;
@@ -25,7 +34,7 @@ export function renderMessages() {
   return `
     <div class="chat-area">
       <div class="header"><div class="title">${title} ${subtitle}</div></div>
-      <div class="messages" id="messages-container">${msgHtml}</div>
+      <div class="messages" id="messages-container">${topHint}${msgHtml}</div>
       <div class="input-area">
         <div class="toolbar"><span>😊</span><span>📎</span><span>📷</span></div>
         <div class="input-row">
