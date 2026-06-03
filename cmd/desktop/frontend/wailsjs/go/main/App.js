@@ -14,6 +14,10 @@ export function GetFriendList() {
   return window['go']['main']['App']['GetFriendList']();
 }
 
+export function GetGroupHistory(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetGroupHistory'](arg1, arg2, arg3);
+}
+
 export function GetHistory(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetHistory'](arg1, arg2, arg3);
 }

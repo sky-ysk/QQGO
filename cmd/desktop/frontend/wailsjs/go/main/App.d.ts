@@ -7,6 +7,8 @@ export function Disconnect():Promise<void>;
 
 export function GetFriendList():Promise<void>;
 
+export function GetGroupHistory(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function GetHistory(arg1:number,arg2:number,arg3:number):Promise<void>;
 
 export function GetSessions():Promise<void>;

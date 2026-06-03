@@ -193,6 +193,19 @@ func (a *App) handleMessage(wire *protocol.WireMessage) {
 		}
 		runtime.EventsEmit(a.ctx, "history-loaded", msgs)
 
+	case *protocol.WireMessage_GroupHistoryResponse:
+		msgs := make([]map[string]interface{}, 0, len(p.GroupHistoryResponse.Messages))
+		for _, m := range p.GroupHistoryResponse.Messages {
+			msgs = append(msgs, map[string]interface{}{
+				"id":        m.Id,
+				"fromQQ":    m.FromQq,
+				"toQQ":      m.ToQq,
+				"content":   m.Content,
+				"createdAt": m.CreatedAt,
+			})
+		}
+		runtime.EventsEmit(a.ctx, "history-loaded", msgs)
+
 	case *protocol.WireMessage_TextMessage:
 		runtime.EventsEmit(a.ctx, "message-received", map[string]interface{}{
 			"id":        wire.Id,
@@ -286,6 +299,19 @@ func (a *App) GetHistory(targetQQ int64, offset, limit int32) error {
 				TargetQq: targetQQ,
 				Offset:   offset,
 				Limit:    limit,
+			},
+		},
+	})
+}
+
+func (a *App) GetGroupHistory(groupID string, offset, limit int32) error {
+	return a.sendWire(&protocol.WireMessage{
+		ClientSeq: a.nextSeq(),
+		Payload: &protocol.WireMessage_GroupHistoryRequest{
+			GroupHistoryRequest: &protocol.GroupHistoryRequest{
+				GroupId: groupID,
+				Offset:  offset,
+				Limit:   limit,
 			},
 		},
 	})

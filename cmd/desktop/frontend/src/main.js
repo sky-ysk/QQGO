@@ -1,6 +1,6 @@
 import './store.js';
 import {renderLogin} from './views/login.js';
-import {renderChat} from './views/chat.js';
+import {initChat} from './views/chat.js';
 
-window.showChat = renderChat;
+window.showChat = initChat;
 renderLogin();

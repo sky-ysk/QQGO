@@ -1,4 +1,4 @@
-import {Connect, Disconnect, Login, Register, SendMessage, SendGroupMessage, GetSessions, GetFriendList, GetHistory} from '../wailsjs/go/main/App.js';
+import {Connect, Disconnect, Login, Register, SendMessage, SendGroupMessage, GetSessions, GetFriendList, GetHistory, GetGroupHistory} from '../wailsjs/go/main/App.js';
 import {EventsOn} from '../wailsjs/runtime/runtime.js';
 
 export const api = {
@@ -11,6 +11,7 @@ export const api = {
   getSessions: () => GetSessions(),
   getFriendList: () => GetFriendList(),
   getHistory: (targetQQ, offset, limit) => GetHistory(targetQQ, offset, limit),
+  getGroupHistory: (groupID, offset, limit) => GetGroupHistory(groupID, offset, limit),
 
   onLoginSuccess: (cb) => EventsOn("login-success", cb),
   onLoginFailed: (cb) => EventsOn("login-failed", cb),

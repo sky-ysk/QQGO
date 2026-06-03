@@ -43,6 +43,8 @@ export function renderLogin() {
     const qq = parseInt(document.getElementById('login-qq').value);
     const password = document.getElementById('login-password').value;
     if (!qq || !password) { alert('请输入 QQ 号和密码'); return; }
+    window.store.set('serverAddr', addr);
+    window.store.set('pendingLogin', {qq, password});
     try {
       await api.connect(addr);
       await api.login(qq, password);
@@ -54,6 +56,8 @@ export function renderLogin() {
     const nickname = document.getElementById('reg-nickname').value;
     const password = document.getElementById('reg-password').value;
     if (!nickname || !password) { alert('请输入昵称和密码'); return; }
+    window.store.set('serverAddr', addr);
+    window.store.set('pendingRegister', {nickname, password});
     try {
       await api.connect(addr);
       await api.register(nickname, password);
@@ -61,12 +65,25 @@ export function renderLogin() {
   });
 
   api.onLoginSuccess((data) => {
-    window.store.set('currentUser', {qq: data.qq, nickname: data.nickname});
+    const pending = window.store.get('pendingLogin');
+    window.store.set('currentUser', {qq: data.qq, nickname: data.nickname, password: pending ? pending.password : ''});
     window.store.set('connected', true);
+    window.store.set('pendingLogin', null);
     window.showChat();
   });
 
   api.onLoginFailed((data) => { alert('登录失败: ' + data.message); });
-  api.onRegisterSuccess((data) => { alert('注册成功！QQ号: ' + data.qq + '\n请切换到登录页登录'); });
+
+  api.onRegisterSuccess((data) => {
+    const pending = window.store.get('pendingRegister');
+    window.store.set('pendingRegister', null);
+    if (pending) {
+      window.store.set('pendingLogin', {qq: data.qq, password: pending.password});
+      api.login(data.qq, pending.password);
+    } else {
+      alert('注册成功！QQ号: ' + data.qq + '\n请切换到登录页登录');
+    }
+  });
+
   api.onRegisterFailed((data) => { alert('注册失败: ' + data.message); });
 }

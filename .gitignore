@@ -2,3 +2,7 @@ qqgo.db
 DATA/
 client
 server
+desktop
+coverage*.out
+cmd/desktop/build/
+.superpowers/
