@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,8 @@ import (
 )
 
 func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+	dbName := strings.ReplaceAll(t.Name(), "/", "_")
+	db, err := gorm.Open(sqlite.Open("file:"+dbName+"?mode=memory&cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
@@ -975,7 +977,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatal("should not have more")
 	}
 
-	fromTime := now.Add(-30 * time.Hour).Format("2006-01-02T15:04:05")
+	fromTime := now.Add(-30 * time.Hour).UTC().Format("2006-01-02T15:04:05")
 	result, _, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, fromTime, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -984,7 +986,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatalf("expected 2 messages with --from, got %d", len(result))
 	}
 
-	toTime := now.Add(-12 * time.Hour).Format("2006-01-02")
+	toTime := now.Add(-12 * time.Hour).UTC().Format("2006-01-02T15:04:05")
 	result, _, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, fromTime, toTime)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -996,7 +998,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatalf("expected msg2, got %s", result[0].Content)
 	}
 
-	toTimeDate := now.Format("2006-01-02")
+	toTimeDate := now.UTC().Format("2006-01-02")
 	result, _, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, fromTime, toTimeDate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1005,7 +1007,7 @@ func TestHistoryTimeRange(t *testing.T) {
 		t.Fatalf("expected 2 messages with date --to, got %d", len(result))
 	}
 
-	futureFrom := now.Add(24 * time.Hour).Format("2006-01-02")
+	futureFrom := now.Add(24 * time.Hour).UTC().Format("2006-01-02")
 	result, hasMore, err = svc.GetHistoryWithTarget(qq1, qq2, 0, 10, futureFrom, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
