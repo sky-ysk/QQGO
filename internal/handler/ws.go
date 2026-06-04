@@ -304,7 +304,7 @@ func (h *Hub) handleRegister(c *ws.Conn, wire *pb.WireMessage, req *pb.RegisterR
 	}
 
 	h.mu.Lock()
-	if oldConn, ok := h.conns[qqNumber]; ok {
+	if oldConn, ok := h.conns[qqNumber]; ok && oldConn != c {
 		oldConn.Close()
 	}
 	c.QQ = qqNumber
@@ -349,7 +349,7 @@ func (h *Hub) handleLogin(c *ws.Conn, wire *pb.WireMessage, req *pb.LoginRequest
 		}
 
 		h.mu.Lock()
-		if oldConn, ok := h.conns[req.Qq]; ok {
+		if oldConn, ok := h.conns[req.Qq]; ok && oldConn != c {
 			oldConn.Close()
 		}
 		c.QQ = req.Qq
@@ -396,7 +396,7 @@ func (h *Hub) handleLogin(c *ws.Conn, wire *pb.WireMessage, req *pb.LoginRequest
 		}
 
 		h.mu.Lock()
-		if oldConn, ok := h.conns[req.Qq]; ok {
+		if oldConn, ok := h.conns[req.Qq]; ok && oldConn != c {
 			oldConn.Close()
 		}
 		c.QQ = req.Qq
