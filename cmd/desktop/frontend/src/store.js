@@ -9,6 +9,7 @@ class Store {
       connected: false,
       activeView: 'sessions',
       searchResults: [],
+      loggedOut: false,
     };
     this.listeners = {};
   }

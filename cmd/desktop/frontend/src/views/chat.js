@@ -58,6 +58,7 @@ function bindSidebarEvents() {
 }
 
 function doLogout() {
+  window.store.set('loggedOut', true);
   api.disconnect();
   api.clearCredentials();
   window.store.set('currentUser', null);
@@ -235,6 +236,9 @@ let reconnectAttempt = 0;
 const maxReconnectAttempts = 5;
 
 function startReconnect() {
+  if (window.store.get('loggedOut')) {
+    return;
+  }
   if (reconnectAttempt >= maxReconnectAttempts) {
     showConnectionBanner('无法连接，请检查服务端');
     return;
@@ -244,6 +248,9 @@ function startReconnect() {
   reconnectAttempt++;
 
   setTimeout(async () => {
+    if (window.store.get('loggedOut')) {
+      return;
+    }
     try {
       const addr = window.store.get('serverAddr') || 'ws://localhost:8080/ws';
       await api.connect(addr);

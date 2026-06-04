@@ -83,6 +83,7 @@ export function renderLogin() {
     window.store.set('currentUser', {qq: data.qq, nickname: data.nickname, password: pending ? pending.password : ''});
     window.store.set('connected', true);
     window.store.set('pendingLogin', null);
+    window.store.set('loggedOut', false);
     const addr = window.store.get('serverAddr') || 'ws://localhost:8080/ws';
     api.saveCredentials(addr, data.qq, pending ? pending.password : '');
     window.showChat();
