@@ -110,6 +110,9 @@ func (c *Conn) WriteProto(msg proto.Message) (err error) {
 func (c *Conn) Close() {
 	c.closeOnce.Do(func() {
 		close(c.Send)
+		if c.WS != nil {
+			c.WS.Close()
+		}
 	})
 }
 

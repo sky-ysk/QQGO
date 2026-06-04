@@ -109,6 +109,7 @@ func main() {
 		}
 
 		log.Println("server exited")
+		os.Exit(0)
 	}()
 
 	if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
