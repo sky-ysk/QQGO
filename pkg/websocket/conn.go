@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type Conn struct {
 	Send     chan []byte
 	pingCh   chan struct{}
 	done     chan struct{}
+	closeOnce sync.Once
 }
 
 func NewConn(ws *websocket.Conn) *Conn {
@@ -85,7 +87,13 @@ func (c *Conn) WriteLoop() {
 	}
 }
 
-func (c *Conn) WriteProto(msg proto.Message) error {
+func (c *Conn) WriteProto(msg proto.Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("connection closed")
+		}
+	}()
+
 	data, err := proto.Marshal(msg)
 	if err != nil {
 		return err
@@ -100,15 +108,9 @@ func (c *Conn) WriteProto(msg proto.Message) error {
 }
 
 func (c *Conn) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	select {
-	case <-c.done:
-		return
-	default:
-	}
-	close(c.Send)
+	c.closeOnce.Do(func() {
+		close(c.Send)
+	})
 }
 
 func (c *Conn) Done() <-chan struct{} {
